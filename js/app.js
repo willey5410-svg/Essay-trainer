@@ -187,7 +187,24 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
     </div>
+    ${set.evaluation ? evalCard(set.evaluation) : ''}
     ${bodiesHtml}`;
+}
+
+function evalCard(ev) {
+  const pass = ev.average >= 8;
+  return `<div class="card eval-card">
+    <div class="body-head">
+      <h3>🧪 Gemini 採点</h3>
+      <span class="eval-avg ${pass ? 'pass' : 'warn'}">平均 ${ev.average} / 10</span>
+    </div>
+    <div class="eval-scores">構成 <strong>${ev.structure}</strong> ・ 内容 <strong>${ev.content}</strong> ・ 英語表現 <strong>${ev.language}</strong></div>
+    <ul class="eval-comments">
+      ${ev.comments.structure ? `<li><strong>構成：</strong>${esc(ev.comments.structure)}</li>` : ''}
+      ${ev.comments.content ? `<li><strong>内容：</strong>${esc(ev.comments.content)}</li>` : ''}
+      ${ev.comments.language ? `<li><strong>英語表現：</strong>${esc(ev.comments.language)}</li>` : ''}
+    </ul>
+  </div>`;
 }
 
 /* ---------- exercise view ---------- */
@@ -422,7 +439,7 @@ async function doGenerateEssay(theme, stance) {
   }
   state.modal = null;
   state.view = 'loading';
-  state.loadingText = 'Gemini が Body 1〜3 の例文を生成中…（10〜20秒）';
+  state.loadingText = 'Gemini が例文を生成し、試験官として採点中…（基準を満たさない場合は再生成するため、最大1分ほどかかることがあります）';
   render();
   try {
     const set = await generateEssaySet(theme, stance);

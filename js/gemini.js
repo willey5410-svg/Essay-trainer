@@ -59,6 +59,7 @@ async function generateEssaySet(theme, stance) {
     source: 'gemini',
     createdAt: Date.now(),
     bodies,
+    evaluation: data.evaluation || null,
   };
 }
 

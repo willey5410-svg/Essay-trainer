@@ -80,6 +80,62 @@ const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'example', 'exp
 const FIXED_WORDS = [38, 30, 33];
 const WORD_MIN = 45;
 const WORD_MAX = 55;
+/* 採点の合格ライン（3観点の平均） */
+const EVAL_THRESHOLD = 8;
+
+/* 評価用にサーバー側でも Body を組み立てるためのテンプレート文字列 */
+const TEMPLATE_STRINGS = [
+  'First and foremost, {reason} is a critical factor that must be considered. This is because {principle}. In essence, when {condition}, it inevitably leads to {result}. A prominent example is seen in {example}, which {explanation}. Therefore, it is evident that {keyConcept} plays a decisive role in {conclusion}.',
+  'Another important consideration is {reason}. This stems from the fact that {principle}. Put simply, whenever {condition}, it tends to result in {result}. For instance, {example}, demonstrating how {explanation}. Hence, it is clear that {keyConcept} is essential for {conclusion}.',
+  'A further point is {reason}. The primary reason for this is that {principle}. In other words, if {condition}, this can lead to {result}. Evidence for this can be found in {example}, where {explanation}. Accordingly, {keyConcept} plays a vital role in {conclusion}.',
+];
+
+function assembleEssay(parsed) {
+  if (!bodyWordTotals(parsed)) return null;
+  return parsed.bodies.slice(0, 3).map((b, i) =>
+    TEMPLATE_STRINGS[i].replace(/\{(\w+)\}/g, (m, key) => String(b.slots[key] || '').trim()));
+}
+
+function buildEvalPrompt(topic, stance, paragraphs) {
+  return `You are a strict but fair examiner for the EIKEN Grade 1 English writing test.
+Evaluate the following THREE body paragraphs written for the prompt below. The introduction and conclusion are intentionally omitted — judge these as body paragraphs only, and do not penalize their absence. The paragraphs follow a fixed rhetorical template by design; do not penalize the repeated structure itself.
+
+TOPIC: ${topic}
+STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
+
+BODY PARAGRAPHS:
+1. ${paragraphs[0]}
+2. ${paragraphs[1]}
+3. ${paragraphs[2]}
+
+Score each criterion from 0 to 10 (0.5 steps allowed):
+- structure: within each paragraph, is the flow (topic sentence → reason → restatement → example → conclusion) consistent and easy for a grader to follow?
+- content: are the three arguments well-chosen, clearly distinct, logically developed, and supported by concrete examples? Is it clear WHY each argument supports the stance?
+- language: grammar accuracy, natural phrasing, and vocabulary range appropriate for EIKEN Grade 1 (CEFR C1)
+
+For each criterion also write one short comment IN JAPANESE: what is good and what specifically should be improved.
+
+Return ONLY this JSON:
+{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}}`;
+}
+
+function normalizeEval(raw) {
+  if (!raw) return null;
+  const ev = {};
+  for (const k of ['structure', 'content', 'language']) {
+    const v = Number(raw[k]);
+    if (!isFinite(v)) return null;
+    ev[k] = Math.max(0, Math.min(10, v));
+  }
+  ev.average = Math.round(((ev.structure + ev.content + ev.language) / 3) * 10) / 10;
+  const c = raw.comments || {};
+  ev.comments = {
+    structure: String(c.structure || '').slice(0, 500),
+    content: String(c.content || '').slice(0, 500),
+    language: String(c.language || '').slice(0, 500),
+  };
+  return ev;
+}
 
 /* 組み立て後の各Bodyの総語数。構造が不正なら null */
 function bodyWordTotals(parsed) {
@@ -97,7 +153,7 @@ function bodyWordTotals(parsed) {
   return totals;
 }
 
-async function callGemini(prompt, apiKey, model) {
+async function callGemini(prompt, apiKey, model, temperature) {
   let r;
   try {
     r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
@@ -105,7 +161,7 @@ async function callGemini(prompt, apiKey, model) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.8, responseMimeType: 'application/json' },
+        generationConfig: { temperature: temperature === undefined ? 0.8 : temperature, responseMimeType: 'application/json' },
       }),
     });
   } catch (e) {
@@ -182,24 +238,74 @@ module.exports = async (req, res) => {
 
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
 
-  let parsed;
-  try {
-    parsed = await callGemini(prompt, apiKey, model);
-  } catch (e) {
-    return res.status(e.status || 502).json({ error: e.message });
-  }
-
-  // 語数制約チェック：範囲外の Body があれば実測値を伝えて1回だけリトライする
-  if (mode === 'essay') {
-    const totals = bodyWordTotals(parsed);
-    if (totals && totals.some(t => t < WORD_MIN || t > WORD_MAX)) {
-      const feedback = `\n\nIMPORTANT FEEDBACK: In your previous attempt the assembled paragraphs totaled ${totals.join(', ')} words. Regenerate so that EVERY assembled paragraph stays within ${WORD_MIN}–${WORD_MAX} words (target 45–50). Adjust the length of your slot values accordingly.`;
-      try {
-        const retry = await callGemini(prompt + feedback, apiKey, model);
-        if (bodyWordTotals(retry)) parsed = retry;
-      } catch (e) { /* リトライ失敗時は初回結果をそのまま返す */ }
+  if (mode === 'themes') {
+    try {
+      return res.status(200).json(await callGemini(prompt, apiKey, model));
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
     }
   }
 
-  return res.status(200).json(parsed);
+  // essay モード：生成 →（語数リトライ）→ 採点 → 平均が閾値未満なら講評付きで1回だけ再生成
+  try {
+    const result = await essayPipeline(prompt, topic, stance, apiKey, model);
+    return res.status(200).json(result);
+  } catch (e) {
+    return res.status(e.status || 502).json({ error: e.message });
+  }
 };
+
+/* 生成1回分（語数制約チェック＋1回リトライ込み） */
+async function genBodiesOnce(prompt, apiKey, model) {
+  let parsed = await callGemini(prompt, apiKey, model);
+  const totals = bodyWordTotals(parsed);
+  if (totals && totals.some(t => t < WORD_MIN || t > WORD_MAX)) {
+    const feedback = `\n\nIMPORTANT FEEDBACK: In your previous attempt the assembled paragraphs totaled ${totals.join(', ')} words. Regenerate so that EVERY assembled paragraph stays within ${WORD_MIN}–${WORD_MAX} words (target 45–50). Adjust the length of your slot values accordingly.`;
+    try {
+      const retry = await callGemini(prompt + feedback, apiKey, model);
+      if (bodyWordTotals(retry)) parsed = retry;
+    } catch (e) { /* リトライ失敗時は初回結果をそのまま返す */ }
+  }
+  return parsed;
+}
+
+/* 採点（失敗しても生成結果は返せるよう、エラー時は null） */
+async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
+  try {
+    return normalizeEval(await callGemini(buildEvalPrompt(topic, stance, paragraphs), apiKey, model, 0.2));
+  } catch (e) {
+    return null;
+  }
+}
+
+async function essayPipeline(prompt, topic, stance, apiKey, model) {
+  const first = await genBodiesOnce(prompt, apiKey, model);
+  const paragraphs = assembleEssay(first);
+  if (!paragraphs) return first; // 構造が不正な場合はクライアント側の検証に委ねる
+
+  const eval1 = await evaluateEssay(topic, stance, paragraphs, apiKey, model);
+  if (!eval1) return { bodies: first.bodies, evaluation: null, attempts: 1 };
+  if (eval1.average >= EVAL_THRESHOLD) {
+    return { bodies: first.bodies, evaluation: eval1, attempts: 1 };
+  }
+
+  // 閾値未満：試験官の講評をフィードバックして1回だけ再生成し、良い方を採用する
+  const feedback = `\n\nEXAMINER FEEDBACK on your previous attempt (scores out of 10 — structure ${eval1.structure}, content ${eval1.content}, language ${eval1.language}):
+- structure: ${eval1.comments.structure}
+- content: ${eval1.comments.content}
+- language: ${eval1.comments.language}
+Regenerate the slot values to address these weaknesses — especially concrete, specific examples and clear logical development of WHY each argument supports the stance — while STRICTLY keeping every template, grammar, and word-count constraint above.`;
+
+  let second = null;
+  let eval2 = null;
+  try {
+    second = await genBodiesOnce(prompt + feedback, apiKey, model);
+    const paragraphs2 = assembleEssay(second);
+    if (paragraphs2) eval2 = await evaluateEssay(topic, stance, paragraphs2, apiKey, model);
+  } catch (e) { /* 再生成に失敗した場合は初回結果を返す */ }
+
+  if (second && eval2 && eval2.average >= eval1.average) {
+    return { bodies: second.bodies, evaluation: eval2, attempts: 2 };
+  }
+  return { bodies: first.bodies, evaluation: eval1, attempts: 2 };
+}
