@@ -9,11 +9,13 @@ const LS = {
 };
 
 let state = {
-  view: 'home',        // home | study | exercise | loading
+  view: 'home',        // home | brainstorm | study | exercise | loading
   modal: null,         // settings | stance | keyword | null
   keywordError: null,
   busyKeyword: false,
   pendingTheme: null,
+  pendingStance: null,
+  bsTimerId: null,
   loadingText: '',
   setId: null,
   showJa: {},
@@ -67,6 +69,7 @@ function findSet(id) { return getSets().find(s => s.id === id); }
 function render() {
   let html = '';
   if (state.view === 'home') html = viewHome();
+  else if (state.view === 'brainstorm') html = viewBrainstorm();
   else if (state.view === 'study') html = viewStudy();
   else if (state.view === 'exercise') html = viewExercise();
   else if (state.view === 'loading') html = viewLoading();
@@ -146,6 +149,70 @@ function viewHome() {
     </section>`;
 }
 
+/* ---------- brainstorm view（生成前の論点出しトレーニング） ---------- */
+
+const BS_SECONDS = 90;
+
+function viewBrainstorm() {
+  const t = state.pendingTheme;
+  return `<header class="topbar">
+      <button class="btn ghost" data-action="go-home">← 中止</button>
+      <span class="topbar-title">論点出しトレーニング</span>
+    </header>
+    <div class="topic-head">
+      <h2>${esc(t.topic)}</h2>
+      <p class="set-sub">${esc(t.topicJa || '')} ${stanceBadge(state.pendingStance)}</p>
+    </div>
+    <div class="card">
+      <div class="body-head">
+        <span class="slot-label">90秒で論点を3つ（<strong>A does B</strong> の形で考える）</span>
+        <span id="bsTimer" class="bs-timer">1:30</span>
+      </div>
+      <input type="text" class="bs-input" id="bsPoint0" placeholder="論点① 例：AIが仕事を奪う">
+      <input type="text" class="bs-input" id="bsPoint1" placeholder="論点②">
+      <input type="text" class="bs-input" id="bsPoint2" placeholder="論点③">
+      <button class="btn small ghost" data-action="bs-hint">💡 観点カテゴリのヒント</button>
+      <div id="bsHints" class="bs-hints" hidden>経済・雇用 ／ 社会・公平性 ／ 倫理・人権 ／ 健康・安全 ／ 環境 ／ 教育・文化 ／ 国際関係</div>
+      <div class="row">
+        <button class="btn" data-action="bs-generate">答え合わせ（Gemini で生成）</button>
+        <button class="btn ghost" data-action="bs-skip">スキップして生成</button>
+      </div>
+      <p class="hint-text">入力した論点は Gemini が有効性を判定し、生成された論点と並べて比較表示されます。日本語でもOKです。</p>
+    </div>`;
+}
+
+function startBrainstorm() {
+  state.modal = null;
+  state.view = 'brainstorm';
+  render();
+  stopBsTimer();
+  const deadline = Date.now() + BS_SECONDS * 1000;
+  // 再レンダリングで入力値が消えないよう、タイマーは DOM を直接更新する
+  state.bsTimerId = setInterval(() => {
+    const el = document.getElementById('bsTimer');
+    if (!el || state.view !== 'brainstorm') { stopBsTimer(); return; }
+    const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    if (left > 0) {
+      el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    } else {
+      el.textContent = '⏰ 時間切れ';
+      el.classList.add('over');
+      stopBsTimer();
+    }
+  }, 250);
+}
+
+function stopBsTimer() {
+  if (state.bsTimerId) { clearInterval(state.bsTimerId); state.bsTimerId = null; }
+}
+
+function collectBrainstormPoints() {
+  return [0, 1, 2]
+    .map(i => (document.getElementById('bsPoint' + i) || {}).value || '')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 /* ---------- study view ---------- */
 
 function viewStudy() {
@@ -185,8 +252,30 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
     </div>
+    ${compareCard(set)}
     ${set.evaluation ? evalCard(set.evaluation) : ''}
     ${bodiesHtml}`;
+}
+
+function compareCard(set) {
+  if (!set.userPoints || !set.userPoints.length) return '';
+  const badge = v => v === 'valid' ? '<span class="verdict valid">✅ 有効</span>'
+    : v === 'invalid' ? '<span class="verdict invalid">✖ 要注意</span>'
+    : '<span class="verdict weak">△ 弱い</span>';
+  const reviews = set.pointsReview || [];
+  const mine = set.userPoints.map((pt, i) => {
+    const r = reviews[i];
+    return `<li>${esc(pt)} ${r ? badge(r.verdict) : ''}
+      ${r && r.comment ? `<div class="verdict-comment">${esc(r.comment)}</div>` : ''}</li>`;
+  }).join('');
+  const gemini = set.bodies.map(b => `<li>${esc(b.slots.reason)}</li>`).join('');
+  return `<div class="card compare-card">
+    <h3>🧠 論点の答え合わせ</h3>
+    <div class="compare-cols">
+      <div><h4>あなたの論点</h4><ol>${mine}</ol></div>
+      <div><h4>Gemini の論点</h4><ol>${gemini}</ol></div>
+    </div>
+  </div>`;
 }
 
 function evalCard(ev) {
@@ -428,7 +517,7 @@ function recordProgress(ex) {
 
 /* ---------- generation flows ---------- */
 
-async function doGenerateEssay(theme, stance) {
+async function doGenerateEssay(theme, stance, userPoints) {
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
     state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
@@ -437,10 +526,10 @@ async function doGenerateEssay(theme, stance) {
   }
   state.modal = null;
   state.view = 'loading';
-  state.loadingText = 'Gemini が例文を生成し、試験官として採点中…（基準を満たさない場合は再生成するため、最大1分ほどかかることがあります）';
+  state.loadingText = 'Gemini が例文を生成し、試験官として採点中…（論点の判定と再生成を含め、最大1分ほどかかることがあります）';
   render();
   try {
-    const set = await generateEssaySet(theme, stance);
+    const set = await generateEssaySet(theme, stance, userPoints);
     const sets = getSets();
     sets.unshift(set);
     saveSetsList(sets);
@@ -586,7 +675,27 @@ $app.addEventListener('click', (ev) => {
     render();
   }
   else if (a === 'choose-stance') {
-    doGenerateEssay(state.pendingTheme, el.dataset.stance);
+    if (!localStorage.getItem(LS.keyword)) {
+      state.modal = 'keyword';
+      state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
+      render();
+      return;
+    }
+    state.pendingStance = el.dataset.stance;
+    startBrainstorm();
+  }
+  else if (a === 'bs-hint') {
+    const hints = document.getElementById('bsHints');
+    if (hints) hints.hidden = !hints.hidden;
+  }
+  else if (a === 'bs-generate') {
+    const points = collectBrainstormPoints();
+    stopBsTimer();
+    doGenerateEssay(state.pendingTheme, state.pendingStance, points);
+  }
+  else if (a === 'bs-skip') {
+    stopBsTimer();
+    doGenerateEssay(state.pendingTheme, state.pendingStance, []);
   }
   else if (a === 'gen-themes') { doGenerateThemes(); }
   else if (a === 'open-set') {
@@ -605,7 +714,7 @@ $app.addEventListener('click', (ev) => {
       render();
     }
   }
-  else if (a === 'go-home') { state.view = 'home'; render(); }
+  else if (a === 'go-home') { stopBsTimer(); state.view = 'home'; render(); }
   else if (a === 'toggle-ja') {
     const bi = Number(el.dataset.body);
     state.showJa[bi] = !state.showJa[bi];

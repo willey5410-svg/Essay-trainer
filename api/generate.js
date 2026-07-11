@@ -10,10 +10,24 @@ const crypto = require('crypto');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
-function buildEssayPrompt(topic, stance) {
+function buildEssayPrompt(topic, stance, userPoints) {
   const stanceText = stance === 'agree'
     ? 'AGREE — support the statement / answer YES'
     : 'DISAGREE — oppose the statement / answer NO';
+  const points = Array.isArray(userPoints) ? userPoints : [];
+  const pointsSection = points.length ? `
+
+USER'S BRAINSTORMED ARGUMENTS (the learner wrote these in 90 seconds BEFORE seeing your answer; they may be in Japanese or English):
+${points.map((p, i) => `${i + 1}. ${p}`).join('\n')}
+
+Tasks for these arguments:
+- Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check especially whether its direction matches the stance.
+- Report the judgments in a "pointsReview" array (one object per argument, same order). Each comment must be IN JAPANESE, short, and say why it works or how to fix it.
+- If an argument is valid and strong, ADOPT it (rephrased into proper form) as one of your three body arguments so the learner sees their own idea turned into English.` : '';
+  const bodiesShape = '{"bodies":[{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","example":"...","explanation":"...","keyConcept":"...","conclusion":"..."},"ja":"..."},{...},{...}]';
+  const jsonShape = points.length
+    ? bodiesShape + ',"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}\n("verdict" must be one of "valid", "weak", "invalid")'
+    : bodiesShape + '}';
   return `You are an expert writing coach for the EIKEN Grade 1 English essay.
 
 TOPIC: ${topic}
@@ -53,10 +67,10 @@ General rules:
 - Slot values: no sentence-final period, start lowercase unless a proper noun
 - The three arguments must be clearly distinct (e.g. economic / social / ethical angles)
 - Every {result} must point in the SAME direction as the stance
-- For each body, also provide "ja": a natural Japanese translation of the FULL assembled paragraph
+- For each body, also provide "ja": a natural Japanese translation of the FULL assembled paragraph${pointsSection}
 
 Return ONLY this JSON structure:
-{"bodies":[{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","example":"...","explanation":"...","keyConcept":"...","conclusion":"..."},"ja":"..."},{...},{...}]}`;
+${jsonShape}`;
 }
 
 function buildThemePrompt(existingTopics) {
@@ -201,7 +215,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
-  const { mode, keyword, topic, stance, existingTopics } = req.body || {};
+  const { mode, keyword, topic, stance, existingTopics, userPoints } = req.body || {};
 
   const expected = process.env.APP_KEYWORD;
   if (!expected) {
@@ -225,7 +239,10 @@ module.exports = async (req, res) => {
     if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
       return res.status(400).json({ error: 'topic / stance が不正です' });
     }
-    prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance);
+    const points = Array.isArray(userPoints)
+      ? userPoints.map(p => String(p).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
+      : [];
+    prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance, points);
   } else if (mode === 'themes') {
     const existing = Array.isArray(existingTopics)
       ? existingTopics.slice(0, 100).map(t => String(t).slice(0, 300))
@@ -277,15 +294,26 @@ async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
   }
 }
 
+/* ユーザー論点の判定結果を検証・整形する */
+function normalizePointsReview(raw) {
+  if (!Array.isArray(raw)) return null;
+  return raw.slice(0, 3).map(r => ({
+    point: String((r && r.point) || '').slice(0, 200),
+    verdict: ['valid', 'weak', 'invalid'].includes(r && r.verdict) ? r.verdict : 'weak',
+    comment: String((r && r.comment) || '').slice(0, 300),
+  }));
+}
+
 async function essayPipeline(prompt, topic, stance, apiKey, model) {
   const first = await genBodiesOnce(prompt, apiKey, model);
   const paragraphs = assembleEssay(first);
   if (!paragraphs) return first; // 構造が不正な場合はクライアント側の検証に委ねる
+  const review1 = normalizePointsReview(first.pointsReview);
 
   const eval1 = await evaluateEssay(topic, stance, paragraphs, apiKey, model);
-  if (!eval1) return { bodies: first.bodies, evaluation: null, attempts: 1 };
+  if (!eval1) return { bodies: first.bodies, evaluation: null, attempts: 1, pointsReview: review1 };
   if (eval1.average >= EVAL_THRESHOLD) {
-    return { bodies: first.bodies, evaluation: eval1, attempts: 1 };
+    return { bodies: first.bodies, evaluation: eval1, attempts: 1, pointsReview: review1 };
   }
 
   // 閾値未満：試験官の講評をフィードバックして1回だけ再生成し、良い方を採用する
@@ -304,7 +332,7 @@ Regenerate the slot values to address these weaknesses — especially concrete, 
   } catch (e) { /* 再生成に失敗した場合は初回結果を返す */ }
 
   if (second && eval2 && eval2.average >= eval1.average) {
-    return { bodies: second.bodies, evaluation: eval2, attempts: 2 };
+    return { bodies: second.bodies, evaluation: eval2, attempts: 2, pointsReview: normalizePointsReview(second.pointsReview) || review1 };
   }
-  return { bodies: first.bodies, evaluation: eval1, attempts: 2 };
+  return { bodies: first.bodies, evaluation: eval1, attempts: 2, pointsReview: review1 };
 }

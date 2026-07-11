@@ -37,8 +37,9 @@ function cleanSlotValue(v) {
   return String(v || '').trim().replace(/[.。]+$/, '');
 }
 
-async function generateEssaySet(theme, stance) {
-  const data = await apiCall({ mode: 'essay', topic: theme.topic, stance });
+async function generateEssaySet(theme, stance, userPoints) {
+  const points = (userPoints || []).map(p => String(p).trim()).filter(Boolean).slice(0, 3);
+  const data = await apiCall({ mode: 'essay', topic: theme.topic, stance, userPoints: points });
   if (!data || !Array.isArray(data.bodies) || data.bodies.length < 3) {
     throw new Error('生成結果の形式が不正です（Body が3つ揃っていません）');
   }
@@ -60,6 +61,8 @@ async function generateEssaySet(theme, stance) {
     createdAt: Date.now(),
     bodies,
     evaluation: data.evaluation || null,
+    userPoints: points,
+    pointsReview: Array.isArray(data.pointsReview) ? data.pointsReview : null,
   };
 }
 
