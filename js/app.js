@@ -16,6 +16,7 @@ let state = {
   pendingTheme: null,
   pendingStance: null,
   bsTimerId: null,
+  slotEdit: null,      // {setId, bodyIdx, slotKey, from, text, result, error, busy}
   loadingText: '',
   setId: null,
   showJa: {},
@@ -76,6 +77,7 @@ function render() {
   if (state.modal === 'settings') html += modalSettings();
   if (state.modal === 'stance') html += modalStance();
   if (state.modal === 'keyword') html += modalKeyword();
+  if (state.modal === 'slotEdit') html += modalSlotEdit();
   $app.innerHTML = html;
 }
 
@@ -222,11 +224,12 @@ function viewStudy() {
 
   const bodiesHtml = set.bodies.map((body, bi) => {
     const tpl = TEMPLATES[bi];
+    const edited = body.originalSlots || {};
     const linesHtml = tpl.lines.map(line =>
       `<p class="study-line">${line.map(p =>
         p.text !== undefined
           ? esc(p.text)
-          : `<span class="slot done" title="${SLOT_LABELS[p.slot]}">${esc(body.slots[p.slot])}</span>`
+          : `<span class="slot done${p.slot in edited ? ' edited' : ''}" data-action="edit-slot" data-from="study" data-id="${esc(set.id)}" data-body="${bi}" data-slot="${p.slot}" title="${SLOT_LABELS[p.slot]}（タップで自分の表現に編集）">${esc(body.slots[p.slot])}</span>`
       ).join('')}</p>`
     ).join('');
     const bp = progress[bi];
@@ -234,11 +237,12 @@ function viewStudy() {
     const stat = `<span class="stat">${wc} 語 ・ ${bp ? `実施 ${bp.count} 回 / ベスト ${bp.best}%` : '未実施'}</span>`;
     const jaShown = state.showJa[bi];
     return `<div class="card body-card">
-      <div class="body-head"><h3>${tpl.name}</h3>${stat}</div>
+      <div class="body-head"><h3>${tpl.name}${Object.keys(edited).length ? ' <span class="badge src">✍️ 自分の表現</span>' : ''}</h3>${stat}</div>
       ${linesHtml}
       ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
       <div class="row">
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
+        ${Object.keys(edited).length ? `<button class="btn small ghost" data-action="undo-slots" data-body="${bi}">元の模範解答に戻す</button>` : ''}
         <button class="btn small" data-action="start-ex" data-id="${esc(set.id)}" data-body="${bi}">▶ この Body を練習</button>
       </div>
     </div>`;
@@ -252,6 +256,7 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
     </div>
+    <p class="hint-text">色付きのスロットをタップすると、自分の表現に書き換えられます（Gemini が判定・添削します）。</p>
     ${compareCard(set)}
     ${set.evaluation ? evalCard(set.evaluation) : ''}
     ${bodiesHtml}`;
@@ -351,6 +356,7 @@ function viewExercise() {
       <div class="chips">${chips}</div>
       <div class="row">
         <button class="btn small ghost" data-action="hint">💡 ヒント（1語）</button>
+        <button class="btn small ghost" data-action="edit-slot" data-from="exercise">✍️ 自分の言葉で</button>
         <button class="btn small ghost" data-action="ex-quit">中断</button>
       </div>
     </div>`;
@@ -427,6 +433,109 @@ function modalStance() {
       <button class="btn ghost wide" data-action="close-modal">キャンセル</button>
     </div>
   </div>`;
+}
+
+function modalSlotEdit() {
+  const se = state.slotEdit;
+  const set = findSet(se.setId);
+  if (!set) return '';
+  const body = set.bodies[se.bodyIdx];
+  const line = TEMPLATES[se.bodyIdx].lines.find(l => l.some(p => p.slot === se.slotKey));
+  const lineHtml = (fill) => line.map(p =>
+    p.text !== undefined ? esc(p.text)
+      : p.slot === se.slotKey ? `<span class="slot current">${fill}</span>`
+      : `<span class="slot done">${esc(body.slots[p.slot])}</span>`).join('');
+  const r = se.result;
+  let bottom;
+  if (r) {
+    const badge = r.verdict === 'ok' ? '<span class="verdict valid">✅ 問題なし</span>'
+      : r.verdict === 'rework' ? '<span class="verdict invalid">✖ 不適合（修正版を提示）</span>'
+      : '<span class="verdict weak">△ 修正あり</span>';
+    bottom = `<div class="review-result">
+      <div class="body-head">${badge}<span class="stat">添削後</span></div>
+      <p class="study-line">${lineHtml(esc(r.corrected))}</p>
+      ${r.explanation ? `<p class="verdict-comment">${esc(r.explanation)}</p>` : ''}
+      <div class="row">
+        <button class="btn small" data-action="slot-apply">この表現で模範解答を置き換える</button>
+        <button class="btn small ghost" data-action="slot-rewrite">書き直す</button>
+        <button class="btn small ghost" data-action="close-modal">置き換えない</button>
+      </div>
+    </div>`;
+  } else {
+    bottom = `<div class="row">
+      <button class="btn" data-action="slot-review" ${se.busy ? 'disabled' : ''}>${se.busy ? 'Gemini が判定中…' : '判定する'}</button>
+      <button class="btn ghost" data-action="close-modal">キャンセル</button>
+    </div>`;
+  }
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>✍️ 「${SLOT_LABELS[se.slotKey]}」を自分の言葉で</h3>
+      <p class="study-line slot-edit-context">${lineHtml('＿＿＿')}</p>
+      <input type="text" id="slotEditInput" value="${esc(se.text)}" placeholder="この空欄に入る英語（日本語混じりでも可）" ${r ? 'disabled' : ''}>
+      ${se.error ? `<p class="field-error">${esc(se.error)}</p>` : ''}
+      ${bottom}
+    </div>
+  </div>`;
+}
+
+async function doReviewSlot() {
+  const se = state.slotEdit;
+  if (!se || se.busy) return;
+  const input = document.getElementById('slotEditInput');
+  if (input) se.text = input.value.trim();
+  if (!se.text) { se.error = '英文を入力してください'; render(); return; }
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '判定には合言葉の入力が必要です';
+    render();
+    return;
+  }
+  se.busy = true;
+  se.error = null;
+  render();
+  try {
+    se.result = await reviewSlot(findSet(se.setId), se.bodyIdx, se.slotKey, se.text);
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+      state.slotEdit = null;
+    } else {
+      se.error = e.message;
+    }
+  }
+  if (state.slotEdit) state.slotEdit.busy = false;
+  render();
+}
+
+function applySlotReplacement() {
+  const se = state.slotEdit;
+  if (!se || !se.result) return;
+  const sets = getSets();
+  const set = sets.find(s => s.id === se.setId);
+  if (!set) return;
+  const body = set.bodies[se.bodyIdx];
+  body.originalSlots = body.originalSlots || {};
+  if (!(se.slotKey in body.originalSlots)) body.originalSlots[se.slotKey] = body.slots[se.slotKey];
+  if (body.originalJa === undefined) body.originalJa = body.ja || '';
+  body.slots[se.slotKey] = se.result.corrected;
+  if (se.result.ja) body.ja = se.result.ja;
+  saveSetsList(sets);
+  // 練習中に置き換えた場合は、その空欄を新しい表現で練習し直す
+  const ex = state.ex;
+  if (se.from === 'exercise' && ex && !ex.done && ex.setId === se.setId && ex.bodyIdx === se.bodyIdx) {
+    const slot = ex.slots[ex.slotPos];
+    if (slot.key === se.slotKey) {
+      slot.words = se.result.corrected.split(/\s+/);
+      ex.wordPos = 0;
+      ex.chips = shuffle(slot.words.slice());
+    }
+  }
+  state.modal = null;
+  state.slotEdit = null;
+  state.notice = '模範解答をあなたの表現に置き換えました';
+  render();
 }
 
 /* ---------- exercise logic ---------- */
@@ -663,7 +772,44 @@ $app.addEventListener('click', (ev) => {
   const a = el.dataset.action;
 
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
-  else if (a === 'close-modal') { state.modal = null; state.keywordError = null; render(); }
+  else if (a === 'close-modal') { state.modal = null; state.keywordError = null; state.slotEdit = null; render(); }
+  else if (a === 'edit-slot') {
+    let setId, bodyIdx, slotKey;
+    if (el.dataset.from === 'exercise') {
+      const ex = state.ex;
+      if (!ex || ex.done) return;
+      setId = ex.setId; bodyIdx = ex.bodyIdx; slotKey = ex.slots[ex.slotPos].key;
+    } else {
+      setId = el.dataset.id; bodyIdx = Number(el.dataset.body); slotKey = el.dataset.slot;
+    }
+    const set = findSet(setId);
+    if (!set) return;
+    state.slotEdit = {
+      setId, bodyIdx, slotKey,
+      from: el.dataset.from,
+      text: el.dataset.from === 'study' ? set.bodies[bodyIdx].slots[slotKey] : '',
+      result: null, error: null, busy: false,
+    };
+    state.modal = 'slotEdit';
+    render();
+  }
+  else if (a === 'slot-review') { doReviewSlot(); }
+  else if (a === 'slot-rewrite') { if (state.slotEdit) { state.slotEdit.result = null; render(); } }
+  else if (a === 'slot-apply') { applySlotReplacement(); }
+  else if (a === 'undo-slots') {
+    const bi = Number(el.dataset.body);
+    const sets = getSets();
+    const set = sets.find(s => s.id === state.setId);
+    const body = set && set.bodies[bi];
+    if (body && body.originalSlots && confirm('この Body のスロットをすべて元の模範解答に戻しますか？')) {
+      for (const k of Object.keys(body.originalSlots)) body.slots[k] = body.originalSlots[k];
+      delete body.originalSlots;
+      if (body.originalJa !== undefined) { body.ja = body.originalJa; delete body.originalJa; }
+      saveSetsList(sets);
+      state.notice = '元の模範解答に戻しました';
+      render();
+    }
+  }
   else if (a === 'save-keyword') { doSaveKeyword(el.dataset.from); }
   else if (a === 'skip-keyword') { state.modal = null; state.keywordError = null; render(); }
   else if (a === 'dismiss-error') { state.error = null; render(); }
@@ -739,6 +885,14 @@ $app.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.id === 'inpKeyword') {
     doSaveKeyword(state.modal === 'settings' ? 'settings' : 'welcome');
   }
+  if (ev.key === 'Enter' && ev.target.id === 'slotEditInput') {
+    doReviewSlot();
+  }
+});
+
+// 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
+$app.addEventListener('input', (ev) => {
+  if (ev.target.id === 'slotEditInput' && state.slotEdit) state.slotEdit.text = ev.target.value;
 });
 
 document.getElementById('importFile').addEventListener('change', (ev) => {

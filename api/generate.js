@@ -205,6 +205,35 @@ async function callGemini(prompt, apiKey, model, temperature) {
   }
 }
 
+/* 学習者が自由入力したスロット値の判定・添削プロンプト */
+function buildReviewSlotPrompt(topic, stance, bodyIndex, slotKey, userText, slots) {
+  const assembled = TEMPLATE_STRINGS[bodyIndex].replace(/\{(\w+)\}/g, (m, k) =>
+    k === slotKey ? `[[${slotKey}]]` : String(slots[k] || '').trim());
+  return `You are an expert EIKEN Grade 1 writing coach.
+
+TOPIC: ${topic}
+STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
+
+A learner is practicing a fixed-template body paragraph. This is the current paragraph, with the slot they want to fill marked as [[${slotKey}]]:
+
+"${assembled}"
+
+The learner proposes this text for the [[${slotKey}]] slot (it may contain English errors or Japanese):
+"${userText}"
+
+Judge the proposal and produce a corrected version:
+- Grammar fit: the corrected value must fit the marked position grammatically (same role as expected there: noun phrase / clause etc.), with no sentence-final period and a lowercase start unless a proper noun.
+- Direction: the resulting sentence must support the stance above.
+- Register: natural, formal written English appropriate for EIKEN Grade 1.
+- Length: keep the corrected value concise (roughly 2–6 words) so the whole paragraph stays near 45–50 words.
+- verdict: "ok" (usable as-is; return it unchanged as corrected), "minor" (good idea, wording corrected), or "rework" (wrong direction, wrong grammatical role, or does not fit — corrected shows a repaired alternative built on their idea).
+- explanation: IN JAPANESE, briefly state what was wrong (or good) and why the correction works.
+- ja: a natural Japanese translation of the FULL paragraph with your corrected value in place.
+
+Return ONLY this JSON:
+{"verdict":"ok","corrected":"...","explanation":"...","ja":"..."}`;
+}
+
 function keywordMatches(given, expected) {
   const a = Buffer.from(String(given));
   const b = Buffer.from(String(expected));
@@ -233,6 +262,36 @@ module.exports = async (req, res) => {
   if (!apiKey) {
     return res.status(500).json({ error: 'サーバーに GEMINI_API_KEY が設定されていません。Vercel の環境変数を確認してください。' });
   }
+  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+
+  if (mode === 'reviewSlot') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const bi = Number(req.body.bodyIndex);
+    const slotKey = req.body.slotKey;
+    const userText = String(req.body.userText || '').trim().slice(0, 300);
+    if (!(bi >= 0 && bi <= 2) || !SLOT_KEYS.includes(slotKey) || !userText) {
+      return res.status(400).json({ error: 'reviewSlot の入力が不正です' });
+    }
+    const slots = {};
+    for (const k of SLOT_KEYS) slots[k] = String((req.body.slots || {})[k] || '').trim().slice(0, 200);
+    try {
+      const raw = await callGemini(
+        buildReviewSlotPrompt(topic.trim().slice(0, 300), stance, bi, slotKey, userText, slots),
+        apiKey, model, 0.2);
+      const corrected = String((raw && raw.corrected) || '').trim().replace(/[.。]+$/, '').slice(0, 200);
+      if (!corrected) return res.status(502).json({ error: '添削結果が取得できませんでした' });
+      return res.status(200).json({
+        verdict: ['ok', 'minor', 'rework'].includes(raw.verdict) ? raw.verdict : 'minor',
+        corrected,
+        explanation: String(raw.explanation || '').slice(0, 500),
+        ja: String(raw.ja || '').slice(0, 1000),
+      });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
 
   let prompt;
   if (mode === 'essay') {
@@ -251,8 +310,6 @@ module.exports = async (req, res) => {
   } else {
     return res.status(400).json({ error: 'mode が不正です' });
   }
-
-  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
 
   if (mode === 'themes') {
     try {

@@ -66,6 +66,21 @@ async function generateEssaySet(theme, stance, userPoints) {
   };
 }
 
+/* 自由入力したスロット値の判定・添削 */
+async function reviewSlot(set, bodyIdx, slotKey, userText) {
+  const data = await apiCall({
+    mode: 'reviewSlot',
+    topic: set.topic,
+    stance: set.stance,
+    bodyIndex: bodyIdx,
+    slotKey,
+    userText,
+    slots: set.bodies[bodyIdx].slots,
+  });
+  if (!data || !data.corrected) throw new Error('添削結果の形式が不正です');
+  return data;
+}
+
 async function generateThemes(existingTopics) {
   const data = await apiCall({ mode: 'themes', existingTopics });
   if (!data || !Array.isArray(data.themes)) throw new Error('生成結果の形式が不正です');
