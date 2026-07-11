@@ -22,31 +22,31 @@ const TEMPLATES = [
   {
     name: 'Body 1',
     lines: [
-      [T('First and foremost, '), S('reason'), T(' is a critical factor that must be considered.')],
+      [T('First and foremost, '), S('reason'), T(' is a crucial factor.')],
       [T('This is because '), S('principle'), T('.')],
-      [T('In essence, when '), S('condition'), T(', it inevitably leads to '), S('result'), T('.')],
-      [T('A prominent example is seen in '), S('example'), T(', which '), S('explanation'), T('.')],
-      [T('Therefore, it is evident that '), S('keyConcept'), T(' plays a decisive role in '), S('conclusion'), T('.')],
+      [T('In essence, when '), S('condition'), T(', it leads to '), S('result'), T('.')],
+      [T('One example is '), S('example'), T(', which '), S('explanation'), T('.')],
+      [T('Therefore, '), S('keyConcept'), T(' plays a key role in '), S('conclusion'), T('.')],
     ],
   },
   {
     name: 'Body 2',
     lines: [
-      [T('Another important consideration is '), S('reason'), T('.')],
-      [T('This stems from the fact that '), S('principle'), T('.')],
-      [T('Put simply, whenever '), S('condition'), T(', it tends to result in '), S('result'), T('.')],
+      [T('Another key point is '), S('reason'), T('.')],
+      [T('This is largely because '), S('principle'), T('.')],
+      [T('Put simply, whenever '), S('condition'), T(', it results in '), S('result'), T('.')],
       [T('For instance, '), S('example'), T(', demonstrating how '), S('explanation'), T('.')],
-      [T('Hence, it is clear that '), S('keyConcept'), T(' is essential for '), S('conclusion'), T('.')],
+      [T('Hence, '), S('keyConcept'), T(' is essential for '), S('conclusion'), T('.')],
     ],
   },
   {
     name: 'Body 3',
     lines: [
       [T('A further point is '), S('reason'), T('.')],
-      [T('The primary reason for this is that '), S('principle'), T('.')],
-      [T('In other words, if '), S('condition'), T(', this can lead to '), S('result'), T('.')],
-      [T('Evidence for this can be found in '), S('example'), T(', where '), S('explanation'), T('.')],
-      [T('Accordingly, '), S('keyConcept'), T(' plays a vital role in '), S('conclusion'), T('.')],
+      [T('The primary reason is that '), S('principle'), T('.')],
+      [T('In other words, if '), S('condition'), T(', this leads to '), S('result'), T('.')],
+      [T('This is evident in '), S('example'), T(', where '), S('explanation'), T('.')],
+      [T('Accordingly, '), S('keyConcept'), T(' is vital for '), S('conclusion'), T('.')],
     ],
   },
 ];

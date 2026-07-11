@@ -5,7 +5,7 @@ const LS = {
   sets: 'et.sets',
   progress: 'et.progress',
   themes: 'et.customThemes',
-  seeded: 'et.seeded',
+  seeded: 'et.seeded.v2', // サンプル内容を更新したらバージョンを上げて再シードする
 };
 
 let state = {
@@ -54,10 +54,8 @@ function saveCustomThemes(t) { localStorage.setItem(LS.themes, JSON.stringify(t)
 
 function seedPresets() {
   if (localStorage.getItem(LS.seeded)) return;
-  const sets = getSets();
-  for (const ps of PRESET_SETS) {
-    if (!sets.some(s => s.id === ps.id)) sets.push(ps);
-  }
+  // 旧バージョンのサンプルは新しい内容に置き換える（生成済みエッセイは残す）
+  const sets = PRESET_SETS.concat(getSets().filter(s => s.source !== 'preset'));
   saveSetsList(sets);
   localStorage.setItem(LS.seeded, '1');
 }

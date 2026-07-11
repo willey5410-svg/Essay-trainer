@@ -23,13 +23,13 @@ Create the content of THREE body paragraphs, each presenting a DIFFERENT argumen
 Do NOT write free-form paragraphs. Instead, fill the slots of the following fixed templates so that each assembled paragraph reads as natural, formal written English.
 
 Body 1 template:
-"First and foremost, {reason} is a critical factor that must be considered. This is because {principle}. In essence, when {condition}, it inevitably leads to {result}. A prominent example is seen in {example}, which {explanation}. Therefore, it is evident that {keyConcept} plays a decisive role in {conclusion}."
+"${TEMPLATE_STRINGS[0]}"
 
 Body 2 template:
-"Another important consideration is {reason}. This stems from the fact that {principle}. Put simply, whenever {condition}, it tends to result in {result}. For instance, {example}, demonstrating how {explanation}. Hence, it is clear that {keyConcept} is essential for {conclusion}."
+"${TEMPLATE_STRINGS[1]}"
 
 Body 3 template:
-"A further point is {reason}. The primary reason for this is that {principle}. In other words, if {condition}, this can lead to {result}. Evidence for this can be found in {example}, where {explanation}. Accordingly, {keyConcept} plays a vital role in {conclusion}."
+"${TEMPLATE_STRINGS[2]}"
 
 Grammar constraints for the slots (CRITICAL — each value must fit its template grammatically):
 - reason: a noun phrase, preferably a gerund or nominalized action (e.g. "the replacement of human labor by AI")
@@ -43,11 +43,10 @@ Grammar constraints for the slots (CRITICAL — each value must fit its template
 - conclusion: a gerund phrase or noun phrase (follows "in" / "for")
 
 Word-count constraint (STRICT, HIGHEST PRIORITY):
-- The total word count of each ASSEMBLED paragraph (fixed template words + your slot words) must stay within 45–55 words, as close to 45–50 as grammar allows.
-- The fixed template words already account for: Body 1 = 38 words, Body 2 = 30 words, Body 3 = 33 words.
-- So your slot values must total roughly: Body 1: 8–14 words, Body 2: 15–20 words, Body 3: 12–17 words.
-- Keep every slot value extremely concise: 1–2 words each for Body 1; 1–4 words each for Bodies 2 and 3.
-- Body 1: aim for 50–55 words total (its template is longer); Bodies 2 and 3: aim for 45–50 words total.
+- The total word count of each ASSEMBLED paragraph (fixed template words + your slot words) must be 45–50 words.
+- The fixed template words already account for: Body 1 = 26 words, Body 2 = 22 words, Body 3 = 25 words.
+- So your slot values must total roughly: Body 1: 19–24 words, Body 2: 23–28 words, Body 3: 20–25 words.
+- Keep every slot value concise: typically 2–4 words each.
 
 General rules:
 - Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1
@@ -77,7 +76,7 @@ Return ONLY this JSON structure:
 
 const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'example', 'explanation', 'keyConcept', 'conclusion'];
 /* 各Bodyテンプレートの固定部分の語数（js/templates.js の固定テキストと一致させること） */
-const FIXED_WORDS = [38, 30, 33];
+const FIXED_WORDS = [26, 22, 25];
 const WORD_MIN = 45;
 const WORD_MAX = 55;
 /* 採点の合格ライン（3観点の平均） */
@@ -85,9 +84,9 @@ const EVAL_THRESHOLD = 8;
 
 /* 評価用にサーバー側でも Body を組み立てるためのテンプレート文字列 */
 const TEMPLATE_STRINGS = [
-  'First and foremost, {reason} is a critical factor that must be considered. This is because {principle}. In essence, when {condition}, it inevitably leads to {result}. A prominent example is seen in {example}, which {explanation}. Therefore, it is evident that {keyConcept} plays a decisive role in {conclusion}.',
-  'Another important consideration is {reason}. This stems from the fact that {principle}. Put simply, whenever {condition}, it tends to result in {result}. For instance, {example}, demonstrating how {explanation}. Hence, it is clear that {keyConcept} is essential for {conclusion}.',
-  'A further point is {reason}. The primary reason for this is that {principle}. In other words, if {condition}, this can lead to {result}. Evidence for this can be found in {example}, where {explanation}. Accordingly, {keyConcept} plays a vital role in {conclusion}.',
+  'First and foremost, {reason} is a crucial factor. This is because {principle}. In essence, when {condition}, it leads to {result}. One example is {example}, which {explanation}. Therefore, {keyConcept} plays a key role in {conclusion}.',
+  'Another key point is {reason}. This is largely because {principle}. Put simply, whenever {condition}, it results in {result}. For instance, {example}, demonstrating how {explanation}. Hence, {keyConcept} is essential for {conclusion}.',
+  'A further point is {reason}. The primary reason is that {principle}. In other words, if {condition}, this leads to {result}. This is evident in {example}, where {explanation}. Accordingly, {keyConcept} is vital for {conclusion}.',
 ];
 
 function assembleEssay(parsed) {
