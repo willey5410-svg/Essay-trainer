@@ -1,0 +1,11 @@
+# 環境変数（APIキー・合言葉）— 絶対にコミットしないこと
+.env
+.env.*
+
+# Vercel CLI のローカル設定
+.vercel
+
+# 依存関係・OSファイル
+node_modules/
+.DS_Store
+Thumbs.db
