@@ -189,3 +189,5 @@ section { margin-bottom: 8px; }
 }
 .modal hr { border: none; border-top: 1px solid var(--border); margin: 16px 0 4px; }
 .modal a { color: var(--accent); }
+.field-error { color: var(--red); font-size: 0.83rem; margin-top: 6px; }
+.modal .wide { margin-top: 12px; }

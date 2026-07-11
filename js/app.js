@@ -1,8 +1,7 @@
 /* 英検1級 Essay Trainer — メインアプリ */
 
 const LS = {
-  apiKey: 'et.apiKey',
-  model: 'et.model',
+  keyword: 'et.keyword',
   sets: 'et.sets',
   progress: 'et.progress',
   themes: 'et.customThemes',
@@ -11,7 +10,9 @@ const LS = {
 
 let state = {
   view: 'home',        // home | study | exercise | loading
-  modal: null,         // settings | stance | null
+  modal: null,         // settings | stance | keyword | null
+  keywordError: null,
+  busyKeyword: false,
   pendingTheme: null,
   loadingText: '',
   setId: null,
@@ -73,6 +74,7 @@ function render() {
   else if (state.view === 'loading') html = viewLoading();
   if (state.modal === 'settings') html += modalSettings();
   if (state.modal === 'stance') html += modalStance();
+  if (state.modal === 'keyword') html += modalKeyword();
   $app.innerHTML = html;
 }
 
@@ -270,23 +272,15 @@ function viewLoading() {
 /* ---------- modals ---------- */
 
 function modalSettings() {
-  const apiKey = localStorage.getItem(LS.apiKey) || '';
-  const model = localStorage.getItem(LS.model) || GEMINI_DEFAULT_MODEL;
   return `<div class="overlay" data-action="close-modal">
     <div class="modal" data-stop>
       <h3>設定</h3>
-      <label>Gemini API キー</label>
-      <input type="password" id="inpApiKey" value="${esc(apiKey)}" placeholder="AIza...">
-      <p class="hint-text"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で無料で取得できます。キーはこの端末のブラウザにのみ保存されます。</p>
-      <label>モデル</label>
-      <input type="text" id="inpModel" value="${esc(model)}" list="modelList">
-      <datalist id="modelList">
-        <option value="gemini-2.5-flash"></option>
-        <option value="gemini-2.5-pro"></option>
-        <option value="gemini-2.0-flash"></option>
-      </datalist>
+      <label>合言葉（キーワード）</label>
+      <input type="password" id="inpKeyword" value="${esc(localStorage.getItem(LS.keyword) || '')}" placeholder="合言葉を入力">
+      ${state.keywordError ? `<p class="field-error">${esc(state.keywordError)}</p>` : ''}
+      <p class="hint-text">Gemini での生成に必要な合言葉です。確認のうえこの端末に保存されます。</p>
       <div class="row">
-        <button class="btn" data-action="save-settings">保存</button>
+        <button class="btn" data-action="save-keyword" data-from="settings" ${state.busyKeyword ? 'disabled' : ''}>${state.busyKeyword ? '確認中…' : '確認して保存'}</button>
         <button class="btn ghost" data-action="close-modal">閉じる</button>
       </div>
       <hr>
@@ -294,6 +288,22 @@ function modalSettings() {
         <button class="btn small ghost" data-action="export-data">データをエクスポート</button>
         <button class="btn small ghost" data-action="import-data">インポート</button>
       </div>
+    </div>
+  </div>`;
+}
+
+function modalKeyword() {
+  return `<div class="overlay">
+    <div class="modal" data-stop>
+      <h3>ようこそ 👋</h3>
+      <p class="hint-text">英検1級エッセイの構築・暗記トレーナーです。Gemini による例文生成を利用するには、合言葉（キーワード）を入力してください。</p>
+      <label>合言葉（キーワード）</label>
+      <input type="password" id="inpKeyword" placeholder="合言葉を入力">
+      ${state.keywordError ? `<p class="field-error">${esc(state.keywordError)}</p>` : ''}
+      <div class="row">
+        <button class="btn wide" data-action="save-keyword" data-from="welcome" ${state.busyKeyword ? 'disabled' : ''}>${state.busyKeyword ? '確認中…' : '確認して開始'}</button>
+      </div>
+      <button class="btn ghost wide" data-action="skip-keyword">あとで入力（サンプル練習のみ）</button>
     </div>
   </div>`;
 }
@@ -403,9 +413,9 @@ function recordProgress(ex) {
 /* ---------- generation flows ---------- */
 
 async function doGenerateEssay(theme, stance) {
-  if (!localStorage.getItem(LS.apiKey)) {
-    state.modal = 'settings';
-    state.error = 'エッセイ生成には Gemini API キーが必要です。設定してください。';
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
     render();
     return;
   }
@@ -424,15 +434,21 @@ async function doGenerateEssay(theme, stance) {
     state.error = null;
   } catch (e) {
     state.view = 'home';
-    state.error = '生成に失敗しました：' + e.message;
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      state.error = '生成に失敗しました：' + e.message;
+    }
   }
   render();
 }
 
 async function doGenerateThemes() {
-  if (!localStorage.getItem(LS.apiKey)) {
-    state.modal = 'settings';
-    state.error = 'テーマ生成には Gemini API キーが必要です。設定してください。';
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = 'テーマ生成には合言葉の入力が必要です';
     render();
     return;
   }
@@ -449,9 +465,40 @@ async function doGenerateThemes() {
     state.notice = `${themes.length} 件のテーマ案を追加しました`;
     state.error = null;
   } catch (e) {
-    state.error = 'テーマ生成に失敗しました：' + e.message;
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      state.error = 'テーマ生成に失敗しました：' + e.message;
+    }
   }
   state.busyThemes = false;
+  render();
+}
+
+async function doSaveKeyword(from) {
+  const input = document.getElementById('inpKeyword');
+  const keyword = input ? input.value.trim() : '';
+  if (!keyword) {
+    state.keywordError = '合言葉を入力してください';
+    render();
+    return;
+  }
+  state.busyKeyword = true;
+  state.keywordError = null;
+  render();
+  try {
+    await verifyKeyword(keyword);
+    localStorage.setItem(LS.keyword, keyword);
+    state.modal = null;
+    state.notice = '合言葉を確認しました。生成機能が利用できます。';
+    state.error = null;
+  } catch (e) {
+    state.keywordError = e.code === 'UNAUTHORIZED' ? '合言葉が正しくありません' : e.message;
+    state.modal = from === 'settings' ? 'settings' : 'keyword';
+  }
+  state.busyKeyword = false;
   render();
 }
 
@@ -510,15 +557,10 @@ $app.addEventListener('click', (ev) => {
   if (stop && el.dataset.action === 'close-modal' && !stop.contains(el)) return;
   const a = el.dataset.action;
 
-  if (a === 'open-settings') { state.modal = 'settings'; render(); }
-  else if (a === 'close-modal') { state.modal = null; render(); }
-  else if (a === 'save-settings') {
-    localStorage.setItem(LS.apiKey, document.getElementById('inpApiKey').value.trim());
-    localStorage.setItem(LS.model, document.getElementById('inpModel').value.trim() || GEMINI_DEFAULT_MODEL);
-    state.modal = null;
-    state.notice = '設定を保存しました';
-    render();
-  }
+  if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
+  else if (a === 'close-modal') { state.modal = null; state.keywordError = null; render(); }
+  else if (a === 'save-keyword') { doSaveKeyword(el.dataset.from); }
+  else if (a === 'skip-keyword') { state.modal = null; state.keywordError = null; render(); }
   else if (a === 'dismiss-error') { state.error = null; render(); }
   else if (a === 'dismiss-notice') { state.notice = null; render(); }
   else if (a === 'pick-theme') {
@@ -568,6 +610,12 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'import-data') { document.getElementById('importFile').click(); }
 });
 
+$app.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && ev.target.id === 'inpKeyword') {
+    doSaveKeyword(state.modal === 'settings' ? 'settings' : 'welcome');
+  }
+});
+
 document.getElementById('importFile').addEventListener('change', (ev) => {
   const file = ev.target.files[0];
   if (file) importData(file);
@@ -577,4 +625,5 @@ document.getElementById('importFile').addEventListener('change', (ev) => {
 /* ---------- init ---------- */
 
 seedPresets();
+if (!localStorage.getItem(LS.keyword)) state.modal = 'keyword';
 render();
