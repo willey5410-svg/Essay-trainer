@@ -47,7 +47,10 @@ async function generateEssaySet(theme, stance, userPoints) {
     const slots = {};
     for (const key of SLOT_KEYS) {
       const v = cleanSlotValue(b.slots && b.slots[key]);
-      if (!v) throw new Error(`生成結果の形式が不正です（Body ${i + 1} の ${key} が空です）`);
+      if (!v) {
+        // アプリ更新直後に古いページがサーバーの新形式を受け取ると起きる
+        throw new Error(`生成結果の形式が不正です（Body ${i + 1} の ${key} が空です）。アプリが更新された直後の可能性があるため、ページを再読み込みしてからもう一度お試しください。`);
+      }
       slots[key] = v;
     }
     return { slots, ja: String(b.ja || '').trim() };
