@@ -5,7 +5,7 @@ const LS = {
   sets: 'et.sets',
   progress: 'et.progress',
   themes: 'et.customThemes',
-  seeded: 'et.seeded.v2', // サンプル内容を更新したらバージョンを上げて再シードする
+  seeded: 'et.seeded.v3', // サンプル内容を更新したらバージョンを上げて再シードする
 };
 
 let state = {

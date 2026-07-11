@@ -24,7 +24,7 @@ Tasks for these arguments:
 - Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check especially whether its direction matches the stance.
 - Report the judgments in a "pointsReview" array (one object per argument, same order). Each comment must be IN JAPANESE, short, and say why it works or how to fix it.
 - If an argument is valid and strong, ADOPT it (rephrased into proper form) as one of your three body arguments so the learner sees their own idea turned into English.` : '';
-  const bodiesShape = '{"bodies":[{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","example":"...","explanation":"...","keyConcept":"...","conclusion":"..."},"ja":"..."},{...},{...}]';
+  const bodiesShape = '{"bodies":[{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","keyConcept":"...","conclusion":"..."},"ja":"..."},{...},{...}]';
   const jsonShape = points.length
     ? bodiesShape + ',"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}\n("verdict" must be one of "valid", "weak", "invalid")'
     : bodiesShape + '}';
@@ -45,22 +45,19 @@ Body 2 template:
 Body 3 template:
 "${TEMPLATE_STRINGS[2]}"
 
-Grammar constraints for the slots (CRITICAL — each value must fit its template grammatically):
-- reason: a noun phrase, preferably a gerund or nominalized action (e.g. "the replacement of human labor by AI")
-- principle: a full clause with subject and verb (follows "because" / "the fact that")
-- condition: a clause with subject and verb, NO leading conjunction (follows "when" / "whenever" / "if")
-- result: a noun phrase (follows "leads to" / "result in")
-- example (Body 1): a noun phrase; explanation (Body 1): a predicate verb phrase continuing "which ..." and agreeing with the example in number
-- example (Body 2): a FULL independent clause with subject and verb; explanation (Body 2): a clause following "how"
-- example (Body 3): a noun phrase naming a country, industry, field, or organization; explanation (Body 3): a clause following "where"
-- keyConcept: a short noun phrase
-- conclusion: a gerund phrase or noun phrase (follows "in" / "for")
+Grammar and richness constraints for the slots (CRITICAL — each value must fit its template grammatically):
+- reason: a substantial noun phrase of 5–8 words with meaningful modifiers (e.g. "the large-scale replacement of workers by AI")
+- principle: a full clause of 8–13 words with subject and verb that explains the underlying MECHANISM, not just a restatement (follows "because" / "reason is that")
+- condition: a clause of 5–7 words with subject and verb, NO leading conjunction (follows "when" / "whenever" / "if")
+- result: a specific noun phrase of 4–7 words naming a concrete consequence (follows "leads to" / "results in")
+- keyConcept: a short noun phrase of 2–4 words
+- conclusion: a gerund phrase or noun phrase of 4–6 words (follows "in" / "for")
 
 Word-count constraint (STRICT, HIGHEST PRIORITY):
 - The total word count of each ASSEMBLED paragraph (fixed template words + your slot words) must be 45–50 words.
-- The fixed template words already account for: Body 1 = 26 words, Body 2 = 22 words, Body 3 = 25 words.
-- So your slot values must total roughly: Body 1: 19–24 words, Body 2: 23–28 words, Body 3: 20–25 words.
-- Keep every slot value concise: typically 2–4 words each.
+- The fixed template words already account for: Body 1 = 22 words, Body 2 = 18 words, Body 3 = 20 words.
+- So your slot values must total roughly: Body 1: 23–28 words, Body 2: 27–32 words, Body 3: 25–30 words.
+- Use the budget for depth: precise modifiers and mechanisms, not filler words.
 
 General rules:
 - Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1
@@ -88,9 +85,9 @@ Return ONLY this JSON structure:
 {"themes":[{"topic":"...","topicJa":"...","category":"..."}]}`;
 }
 
-const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'example', 'explanation', 'keyConcept', 'conclusion'];
+const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'keyConcept', 'conclusion'];
 /* 各Bodyテンプレートの固定部分の語数（js/templates.js の固定テキストと一致させること） */
-const FIXED_WORDS = [26, 22, 25];
+const FIXED_WORDS = [22, 18, 20];
 const WORD_MIN = 45;
 const WORD_MAX = 55;
 /* 採点の合格ライン（3観点の平均） */
@@ -98,9 +95,9 @@ const EVAL_THRESHOLD = 8;
 
 /* 評価用にサーバー側でも Body を組み立てるためのテンプレート文字列 */
 const TEMPLATE_STRINGS = [
-  'First and foremost, {reason} is a crucial factor. This is because {principle}. In essence, when {condition}, it leads to {result}. One example is {example}, which {explanation}. Therefore, {keyConcept} plays a key role in {conclusion}.',
-  'Another key point is {reason}. This is largely because {principle}. Put simply, whenever {condition}, it results in {result}. For instance, {example}, demonstrating how {explanation}. Hence, {keyConcept} is essential for {conclusion}.',
-  'A further point is {reason}. The primary reason is that {principle}. In other words, if {condition}, this leads to {result}. This is evident in {example}, where {explanation}. Accordingly, {keyConcept} is vital for {conclusion}.',
+  'First and foremost, {reason} is a crucial factor. This is because {principle}. In essence, when {condition}, it leads to {result}. Therefore, {keyConcept} plays a key role in {conclusion}.',
+  'Another key point is {reason}. This is largely because {principle}. Put simply, whenever {condition}, it results in {result}. Hence, {keyConcept} is essential for {conclusion}.',
+  'A further point is {reason}. The primary reason is that {principle}. In other words, if {condition}, this leads to {result}. Accordingly, {keyConcept} is vital for {conclusion}.',
 ];
 
 function assembleEssay(parsed) {
@@ -111,7 +108,7 @@ function assembleEssay(parsed) {
 
 function buildEvalPrompt(topic, stance, paragraphs) {
   return `You are a strict but fair examiner for the EIKEN Grade 1 English writing test.
-Evaluate the following THREE body paragraphs written for the prompt below. The introduction and conclusion are intentionally omitted — judge these as body paragraphs only, and do not penalize their absence. The paragraphs follow a fixed rhetorical template by design; do not penalize the repeated structure itself.
+Evaluate the following THREE body paragraphs written for the prompt below. The introduction and conclusion are intentionally omitted — judge these as body paragraphs only, and do not penalize their absence. The paragraphs follow a fixed rhetorical template by design, and concrete examples are intentionally omitted from the template for concision — do NOT penalize the repeated structure or the absence of example sentences; judge the depth of the reasoning instead.
 
 TOPIC: ${topic}
 STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
@@ -122,8 +119,8 @@ BODY PARAGRAPHS:
 3. ${paragraphs[2]}
 
 Score each criterion from 0 to 10 (0.5 steps allowed):
-- structure: within each paragraph, is the flow (topic sentence → reason → restatement → example → conclusion) consistent and easy for a grader to follow?
-- content: are the three arguments well-chosen, clearly distinct, logically developed, and supported by concrete examples? Is it clear WHY each argument supports the stance?
+- structure: within each paragraph, is the flow (topic sentence → underlying principle → condition and consequence → conclusion) consistent and easy for a grader to follow?
+- content: are the three arguments well-chosen, clearly distinct, and logically developed with real depth (mechanisms and specific consequences rather than vague claims)? Is it clear WHY each argument supports the stance?
 - language: grammar accuracy, natural phrasing, and vocabulary range appropriate for EIKEN Grade 1 (CEFR C1)
 
 For each criterion also write one short comment IN JAPANESE: what is good and what specifically should be improved.
@@ -225,7 +222,7 @@ Judge the proposal and produce a corrected version:
 - Grammar fit: the corrected value must fit the marked position grammatically (same role as expected there: noun phrase / clause etc.), with no sentence-final period and a lowercase start unless a proper noun.
 - Direction: the resulting sentence must support the stance above.
 - Register: natural, formal written English appropriate for EIKEN Grade 1.
-- Length: keep the corrected value concise (roughly 2–6 words) so the whole paragraph stays near 45–50 words.
+- Length: keep the corrected value concise (roughly 2–8 words) so the whole paragraph stays near 45–50 words.
 - verdict: "ok" (usable as-is; return it unchanged as corrected), "minor" (good idea, wording corrected), or "rework" (wrong direction, wrong grammatical role, or does not fit — corrected shows a repaired alternative built on their idea).
 - explanation: IN JAPANESE, briefly state what was wrong (or good) and why the correction works.
 - ja: a natural Japanese translation of the FULL paragraph with your corrected value in place.

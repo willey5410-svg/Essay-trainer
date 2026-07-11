@@ -4,20 +4,18 @@
 
 ## コンセプト
 
-Body 1〜3 は次の5文構造の固定テンプレートで、埋めるスロットは共通の8つです。
+Body 1〜3 は次の4文構造（主張 → 原理 → 条件と帰結 → 結論）の固定テンプレートで、埋めるスロットは共通の6つです。
 
 | スロット | 役割 | 例（AI規制） |
 |---|---|---|
-| Reason | 観点（動詞で考えて名詞化） | replacing workers with AI |
-| General principle | 原理（なぜ起きるか） | AI automates human tasks |
-| Condition | 条件 | AI spreads unchecked |
-| Result | 結果（主張と同じ方向） | mass unemployment |
-| Example | 具体例 | customer service |
-| Explanation | 説明 | has lost thousands of jobs |
+| Reason | 観点（動詞で考えて名詞化、5〜8語） | the large-scale replacement of workers by AI |
+| General principle | 原理（メカニズムまで述べる節、8〜13語） | AI handles complex judgment tasks at minimal cost |
+| Condition | 条件 | companies automate without restraint |
+| Result | 結果（主張と同じ方向・具体的に） | widespread structural unemployment |
 | Key concept | キー概念 | unregulated automation |
-| Conclusion | 結論 | destabilizing employment |
+| Conclusion | 結論 | destabilizing the labor market |
 
-各 Body は固定部分を軽量化したテンプレート（固定 26 / 22 / 25 語）を使い、組み立て後 45〜50 語程度に収まるよう生成されます。
+各 Body は例証文を省いた軽量テンプレート（固定 22 / 18 / 20 語）を使い、浮いた語数を観点・原理・結果の厚みに充て、組み立て後 45〜50 語程度に収まるよう生成されます。
 
 思考の型：**A does B（動き）→ because（なぜ）→ leads to C（どう悪くなる／なぜ必要）**
 
