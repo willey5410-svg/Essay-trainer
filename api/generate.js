@@ -42,9 +42,16 @@ Grammar constraints for the slots (CRITICAL — each value must fit its template
 - keyConcept: a short noun phrase
 - conclusion: a gerund phrase or noun phrase (follows "in" / "for")
 
+Word-count constraint (STRICT, HIGHEST PRIORITY):
+- The total word count of each ASSEMBLED paragraph (fixed template words + your slot words) must stay within 45–55 words, as close to 45–50 as grammar allows.
+- The fixed template words already account for: Body 1 = 38 words, Body 2 = 30 words, Body 3 = 33 words.
+- So your slot values must total roughly: Body 1: 8–14 words, Body 2: 15–20 words, Body 3: 12–17 words.
+- Keep every slot value extremely concise: 1–2 words each for Body 1; 1–4 words each for Bodies 2 and 3.
+- Body 1: aim for 50–55 words total (its template is longer); Bodies 2 and 3: aim for 45–50 words total.
+
 General rules:
 - Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1
-- Each slot value: at most 14 words, no sentence-final period, start lowercase unless a proper noun
+- Slot values: no sentence-final period, start lowercase unless a proper noun
 - The three arguments must be clearly distinct (e.g. economic / social / ethical angles)
 - Every {result} must point in the SAME direction as the stance
 - For each body, also provide "ja": a natural Japanese translation of the FULL assembled paragraph
@@ -66,6 +73,67 @@ For each topic provide:
 
 Return ONLY this JSON structure:
 {"themes":[{"topic":"...","topicJa":"...","category":"..."}]}`;
+}
+
+const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'example', 'explanation', 'keyConcept', 'conclusion'];
+/* 各Bodyテンプレートの固定部分の語数（js/templates.js の固定テキストと一致させること） */
+const FIXED_WORDS = [38, 30, 33];
+const WORD_MIN = 45;
+const WORD_MAX = 55;
+
+/* 組み立て後の各Bodyの総語数。構造が不正なら null */
+function bodyWordTotals(parsed) {
+  if (!parsed || !Array.isArray(parsed.bodies) || parsed.bodies.length < 3) return null;
+  const totals = [];
+  for (let i = 0; i < 3; i++) {
+    const slots = parsed.bodies[i] && parsed.bodies[i].slots;
+    if (!slots) return null;
+    let n = FIXED_WORDS[i];
+    for (const key of SLOT_KEYS) {
+      n += String(slots[key] || '').trim().split(/\s+/).filter(Boolean).length;
+    }
+    totals.push(n);
+  }
+  return totals;
+}
+
+async function callGemini(prompt, apiKey, model) {
+  let r;
+  try {
+    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.8, responseMimeType: 'application/json' },
+      }),
+    });
+  } catch (e) {
+    const err = new Error('Gemini API への接続に失敗しました');
+    err.status = 502;
+    throw err;
+  }
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).error?.message || ''; } catch (e) { /* ignore */ }
+    const err = new Error(`Gemini APIエラー (${r.status}) ${detail}`.trim());
+    err.status = 502;
+    throw err;
+  }
+  const data = await r.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    const err = new Error('Gemini から有効な応答が得られませんでした');
+    err.status = 502;
+    throw err;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const err = new Error('生成結果の JSON 解析に失敗しました');
+    err.status = 502;
+    throw err;
+  }
 }
 
 function keywordMatches(given, expected) {
@@ -113,36 +181,25 @@ module.exports = async (req, res) => {
   }
 
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-  let r;
+  let parsed;
   try {
-    r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.8, responseMimeType: 'application/json' },
-      }),
-    });
+    parsed = await callGemini(prompt, apiKey, model);
   } catch (e) {
-    return res.status(502).json({ error: 'Gemini API への接続に失敗しました' });
+    return res.status(e.status || 502).json({ error: e.message });
   }
 
-  if (!r.ok) {
-    let detail = '';
-    try { detail = (await r.json()).error?.message || ''; } catch (e) { /* ignore */ }
-    return res.status(502).json({ error: `Gemini APIエラー (${r.status}) ${detail}`.trim() });
+  // 語数制約チェック：範囲外の Body があれば実測値を伝えて1回だけリトライする
+  if (mode === 'essay') {
+    const totals = bodyWordTotals(parsed);
+    if (totals && totals.some(t => t < WORD_MIN || t > WORD_MAX)) {
+      const feedback = `\n\nIMPORTANT FEEDBACK: In your previous attempt the assembled paragraphs totaled ${totals.join(', ')} words. Regenerate so that EVERY assembled paragraph stays within ${WORD_MIN}–${WORD_MAX} words (target 45–50). Adjust the length of your slot values accordingly.`;
+      try {
+        const retry = await callGemini(prompt + feedback, apiKey, model);
+        if (bodyWordTotals(retry)) parsed = retry;
+      } catch (e) { /* リトライ失敗時は初回結果をそのまま返す */ }
+    }
   }
 
-  const data = await r.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    return res.status(502).json({ error: 'Gemini から有効な応答が得られませんでした' });
-  }
-  try {
-    return res.status(200).json(JSON.parse(text));
-  } catch (e) {
-    return res.status(502).json({ error: '生成結果の JSON 解析に失敗しました' });
-  }
+  return res.status(200).json(parsed);
 };

@@ -165,7 +165,8 @@ function viewStudy() {
       ).join('')}</p>`
     ).join('');
     const bp = progress[bi];
-    const stat = bp ? `<span class="stat">実施 ${bp.count} 回 / ベスト ${bp.best}%</span>` : '<span class="stat">未実施</span>';
+    const wc = assembleBody(bi, body.slots).split(/\s+/).filter(Boolean).length;
+    const stat = `<span class="stat">${wc} 語 ・ ${bp ? `実施 ${bp.count} 回 / ベスト ${bp.best}%` : '未実施'}</span>`;
     const jaShown = state.showJa[bi];
     return `<div class="card body-card">
       <div class="body-head"><h3>${tpl.name}</h3>${stat}</div>
