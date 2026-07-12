@@ -10,6 +10,25 @@ const crypto = require('crypto');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
+/* 各Bodyの固定語数と、45〜50語に収めるためのスロット合計語数の目安 */
+const BODY_WORD_BUDGET = [
+  { fixed: 22, slotMin: 23, slotMax: 28 },
+  { fixed: 18, slotMin: 27, slotMax: 32 },
+  { fixed: 20, slotMin: 25, slotMax: 30 },
+];
+
+/* Body生成・書き直し共通のスロット文法・内容制約（観点の中立・構造・抽象化の3原則を含む） */
+const SLOT_CONSTRAINTS = `- reason: a substantial noun phrase of 5–8 words with meaningful modifiers, describing WHAT structurally changes — three principles, in order of importance:
+  1. NEUTRAL: never bake in a value judgment about whether the change is good or bad (avoid words like "decline", "undermined", "dangerous", "harmed"; describe the change itself — e.g. "the reshaping of the labor force" NOT "the labor force is harmed")
+  2. STRUCTURAL: name the structure/system that changes, not who benefits or loses — e.g. educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation
+  3. ABSTRACT: one level more abstract than the concrete phenomenon in the topic — e.g. "students using AI for homework" → "the learning process being altered"; "more women entering the workforce" → "the labor force being reshaped"
+  (e.g. "the large-scale reshaping of the labor force by AI")
+- principle: a full clause of 8–13 words with subject and verb that explains the underlying MECHANISM — WHY this structural change happens, not just a restatement (follows "because" / "reason is that")
+- condition: a clause of 5–7 words with subject and verb, NO leading conjunction (follows "when" / "whenever" / "if")
+- result: a specific noun phrase of 4–7 words naming the downstream SOCIAL consequence — the "so what?", not merely the first-order effect (e.g. not just "critical thinking declines" but "a reduced ability to adapt to new challenges") (follows "leads to" / "results in")
+- keyConcept: a short noun phrase of 2–4 words
+- conclusion: a gerund phrase or noun phrase of 4–6 words (follows "in" / "for")`;
+
 function buildEssayPrompt(topic, stance, userPoints) {
   const stanceText = stance === 'agree'
     ? 'AGREE — support the statement / answer YES'
@@ -50,16 +69,7 @@ Body 3 template:
 "${TEMPLATE_STRINGS[2]}"
 
 Grammar and richness constraints for the slots (CRITICAL — each value must fit its template grammatically):
-- reason: a substantial noun phrase of 5–8 words with meaningful modifiers, describing WHAT structurally changes — three principles, in order of importance:
-  1. NEUTRAL: never bake in a value judgment about whether the change is good or bad (avoid words like "decline", "undermined", "dangerous", "harmed"; describe the change itself — e.g. "the reshaping of the labor force" NOT "the labor force is harmed")
-  2. STRUCTURAL: name the structure/system that changes, not who benefits or loses — e.g. educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation
-  3. ABSTRACT: one level more abstract than the concrete phenomenon in the topic — e.g. "students using AI for homework" → "the learning process being altered"; "more women entering the workforce" → "the labor force being reshaped"
-  (e.g. "the large-scale reshaping of the labor force by AI")
-- principle: a full clause of 8–13 words with subject and verb that explains the underlying MECHANISM — WHY this structural change happens, not just a restatement (follows "because" / "reason is that")
-- condition: a clause of 5–7 words with subject and verb, NO leading conjunction (follows "when" / "whenever" / "if")
-- result: a specific noun phrase of 4–7 words naming the downstream SOCIAL consequence — the "so what?", not merely the first-order effect (e.g. not just "critical thinking declines" but "a reduced ability to adapt to new challenges") (follows "leads to" / "results in")
-- keyConcept: a short noun phrase of 2–4 words
-- conclusion: a gerund phrase or noun phrase of 4–6 words (follows "in" / "for")
+${SLOT_CONSTRAINTS}
 
 Word-count constraint (STRICT, HIGHEST PRIORITY):
 - The total word count of each ASSEMBLED paragraph (fixed template words + your slot words) must be 45–50 words.
@@ -196,6 +206,98 @@ async function callGemini(prompt, apiKey, model, temperature) {
     err.status = 502;
     throw err;
   }
+}
+
+/* 論点だしトレーニングで作った論点を核に、Body 1本を丸ごと書き直すプロンプト */
+function buildRewriteBodyPrompt(topic, stance, bodyIndex, userPoint) {
+  const stanceText = stance === 'agree'
+    ? 'AGREE — support the statement / answer YES'
+    : 'DISAGREE — oppose the statement / answer NO';
+  const budget = BODY_WORD_BUDGET[bodyIndex];
+  return `You are an expert writing coach for the EIKEN Grade 1 English essay.
+
+TOPIC: ${topic}
+STANCE: ${stanceText}
+
+The learner wants to rewrite ONE body paragraph built around this argument idea (may be rough, in Japanese or English): "${userPoint}"
+
+Fill the slots of this fixed template so the assembled paragraph reads as natural, formal written English:
+"${TEMPLATE_STRINGS[bodyIndex]}"
+
+Grammar and richness constraints for the slots (CRITICAL — each value must fit its template grammatically):
+${SLOT_CONSTRAINTS}
+
+Word-count constraint (STRICT, HIGHEST PRIORITY):
+- The total word count of the ASSEMBLED paragraph (fixed template words + your slot words) must be 45–50 words.
+- The fixed template words already account for ${budget.fixed} words, so your slot values must total roughly ${budget.slotMin}–${budget.slotMax} words.
+- Use the budget for depth: precise modifiers and mechanisms, not filler words.
+
+General rules:
+- Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1
+- Slot values: no sentence-final period, start lowercase unless a proper noun
+- The {result} must point in the SAME direction as the stance
+- ADOPT the learner's idea as the {reason} — rephrase it to satisfy the neutral/structural/abstract principles above; don't just copy it verbatim
+- Provide "ja": a natural Japanese translation of the FULL assembled paragraph
+
+Return ONLY this JSON:
+{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","keyConcept":"...","conclusion":"..."},"ja":"..."}`;
+}
+
+/* エッセイの採点・論点判定についてGeminiと会話するためのシステム文脈 */
+function buildChatSystemContext(topic, stance, bodies, evaluation, pointsReview) {
+  const paragraphs = assembleEssay(bodies) || [];
+  let s = `You are a friendly, encouraging EIKEN Grade 1 English essay writing coach, chatting with a learner about a specific practice essay they are working on.
+
+TOPIC: ${topic}
+STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
+
+CURRENT BODY PARAGRAPHS:
+${paragraphs.map((p, i) => `${i + 1}. ${p}`).join('\n')}`;
+
+  if (evaluation && typeof evaluation.average === 'number') {
+    s += `\n\nEXAMINER SCORES (out of 10): structure ${evaluation.structure}, content ${evaluation.content}, language ${evaluation.language} (average ${evaluation.average}).
+Examiner comments — structure: ${evaluation.comments?.structure || ''} / content: ${evaluation.comments?.content || ''} / language: ${evaluation.comments?.language || ''}`;
+  }
+  if (Array.isArray(pointsReview) && pointsReview.length) {
+    s += `\n\nLEARNER'S BRAINSTORMED ARGUMENTS AND JUDGMENTS:\n` +
+      pointsReview.map((r, i) => `${i + 1}. "${r.point}" — ${r.verdict} (${r.comment})`).join('\n');
+  }
+  s += `\n\nAnswer the learner's questions IN JAPANESE, concisely (a few sentences unless real detail is needed), in a supportive tone. You may reference specific body paragraphs, scores, or arguments above. Do not regenerate the essay or invent a new template — just discuss and advise.`;
+  return s;
+}
+
+async function callGeminiChat(systemText, turns, apiKey, model) {
+  let r;
+  try {
+    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemText }] },
+        contents: turns.map(t => ({ role: t.role, parts: [{ text: t.text }] })),
+        generationConfig: { temperature: 0.6 },
+      }),
+    });
+  } catch (e) {
+    const err = new Error('Gemini API への接続に失敗しました');
+    err.status = 502;
+    throw err;
+  }
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).error?.message || ''; } catch (e) { /* ignore */ }
+    const err = new Error(`Gemini APIエラー (${r.status}) ${detail}`.trim());
+    err.status = 502;
+    throw err;
+  }
+  const data = await r.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    const err = new Error('Gemini から有効な応答が得られませんでした');
+    err.status = 502;
+    throw err;
+  }
+  return text.trim();
 }
 
 /* 学習者が自由入力したスロット値の判定・添削プロンプト */
@@ -355,6 +457,53 @@ module.exports = async (req, res) => {
       const review = normalizePointsReview(raw && raw.pointsReview);
       if (!review || !review.length) return res.status(502).json({ error: '判定結果の形式が不正です' });
       return res.status(200).json({ pointsReview: review });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'rewriteBody') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const bi = Number(req.body.bodyIndex);
+    const userPoint = String(req.body.userPoint || '').trim().slice(0, 200);
+    if (!(bi >= 0 && bi <= 2) || !userPoint) {
+      return res.status(400).json({ error: 'rewriteBody の入力が不正です' });
+    }
+    try {
+      const parsed = await callGemini(buildRewriteBodyPrompt(topic.trim().slice(0, 300), stance, bi, userPoint), apiKey, model);
+      const slots = parsed && parsed.slots;
+      if (!slots || SLOT_KEYS.some(k => !String(slots[k] || '').trim())) {
+        return res.status(502).json({ error: '生成結果の形式が不正です（スロットが不足しています）' });
+      }
+      return res.status(200).json({ slots, ja: String(parsed.ja || '').trim() });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'chat') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    if (!assembleEssay(req.body.bodies)) {
+      return res.status(400).json({ error: 'bodies が不正です' });
+    }
+    const message = String(req.body.message || '').trim().slice(0, 500);
+    if (!message) return res.status(400).json({ error: 'メッセージが入力されていません' });
+    const history = Array.isArray(req.body.history)
+      ? req.body.history.slice(-24).map(t => ({
+          role: t && t.role === 'model' ? 'model' : 'user',
+          text: String((t && t.text) || '').trim().slice(0, 1000),
+        })).filter(t => t.text)
+      : [];
+    const turns = history.concat([{ role: 'user', text: message }]);
+    try {
+      const systemText = buildChatSystemContext(
+        topic.trim().slice(0, 300), stance, req.body.bodies, req.body.evaluation || null, req.body.pointsReview || null);
+      const reply = await callGeminiChat(systemText, turns, apiKey, model);
+      return res.status(200).json({ reply });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

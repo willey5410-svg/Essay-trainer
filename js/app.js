@@ -40,6 +40,11 @@ let state = {
   notice: null,
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
+  bodyRewrite: null,     // {setId, point, bodyIdx, result, error, busy}
+  chatSetId: null,
+  chatDraft: '',
+  chatBusy: false,
+  chatError: null,
 };
 
 const $app = document.getElementById('app');
@@ -226,6 +231,8 @@ function render() {
   if (state.modal === 'keyword') html += modalKeyword();
   if (state.modal === 'slotEdit') html += modalSlotEdit();
   if (state.modal === 'themeAdd') html += modalThemeAdd();
+  if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
+  if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
 }
 
@@ -433,7 +440,10 @@ function viewStudy() {
     <div class="topic-head">
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
-      ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
+      <div class="row">
+        ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
+        <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
+      </div>
     </div>
     <p class="hint-text">色付きのスロットをタップすると、自分の表現に書き換えられます（Gemini が判定・添削します）。</p>
     ${compareCard(set)}
@@ -456,8 +466,10 @@ function compareCard(set) {
   const reviews = set.pointsReview || [];
   const mine = set.userPoints.map((pt, i) => {
     const r = reviews[i];
+    const canReflect = r && r.verdict !== 'invalid';
     return `<li>${esc(pt)} ${r ? badge(r.verdict) : ''}
-      ${r && r.comment ? `<div class="verdict-comment">${esc(r.comment)}</div>` : ''}</li>`;
+      ${r && r.comment ? `<div class="verdict-comment">${esc(r.comment)}</div>` : ''}
+      ${canReflect ? `<button class="btn small ghost" data-action="open-rewrite-body" data-set="${esc(set.id)}" data-point="${esc(pt)}">→ Bodyに反映</button>` : ''}</li>`;
   }).join('');
   const gemini = set.bodies.map(b => `<li>${esc(b.slots.reason)}</li>`).join('');
   return `<div class="card compare-card">
@@ -752,6 +764,174 @@ function applySlotReplacement() {
   state.slotEdit = null;
   state.notice = '模範解答をあなたの表現に置き換えました';
   render();
+}
+
+/* ---------- 論点をBodyに反映（丸ごと書き直し） ---------- */
+
+function modalBodyRewrite() {
+  const br = state.bodyRewrite;
+  const set = findSet(br.setId);
+  if (!set) return '';
+  let inner;
+  if (br.result) {
+    inner = `<p class="study-line">${esc(assembleBody(br.bodyIdx, br.result.slots))}</p>
+      <p class="ja-text">${esc(br.result.ja)}</p>
+      <div class="row">
+        <button class="btn small" data-action="apply-rewrite-body">この内容で Body ${br.bodyIdx + 1} を置き換える</button>
+        <button class="btn small ghost" data-action="pick-rewrite-body" data-body="${br.bodyIdx}">もう一度書き直す</button>
+        <button class="btn small ghost" data-action="close-modal">キャンセル</button>
+      </div>`;
+  } else if (br.bodyIdx !== null) {
+    inner = br.busy
+      ? `<p class="hint-text">Gemini が Body ${br.bodyIdx + 1} を書き直し中…</p>`
+      : `${br.error ? `<p class="field-error">${esc(br.error)}</p>` : ''}
+        <div class="row">
+          <button class="btn small ghost" data-action="pick-rewrite-body" data-body="${br.bodyIdx}">もう一度試す</button>
+          <button class="btn small ghost" data-action="close-modal">キャンセル</button>
+        </div>`;
+  } else {
+    inner = `<p class="hint-text">この論点を使って書き換える Body を選んでください。</p>
+      <div class="row">
+        ${[0, 1, 2].map(i => `<button class="btn small" data-action="pick-rewrite-body" data-body="${i}">Body ${i + 1}</button>`).join('')}
+      </div>
+      <button class="btn ghost wide" data-action="close-modal">キャンセル</button>`;
+  }
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>🔁 論点をBodyに反映</h3>
+      <p class="hint-text slot-edit-context">「${esc(br.point)}」</p>
+      ${inner}
+    </div>
+  </div>`;
+}
+
+async function doRewriteBody(bodyIdx) {
+  const br = state.bodyRewrite;
+  if (!br) return;
+  br.bodyIdx = bodyIdx;
+  br.result = null;
+  br.error = null;
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '書き換えには合言葉の入力が必要です';
+    render();
+    return;
+  }
+  br.busy = true;
+  render();
+  try {
+    const set = findSet(br.setId);
+    br.result = await rewriteBodyWithPoint(set, bodyIdx, br.point);
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+      state.bodyRewrite = null;
+      render();
+      return;
+    }
+    br.error = e.message;
+  }
+  br.busy = false;
+  render();
+}
+
+function applyBodyRewrite() {
+  const br = state.bodyRewrite;
+  if (!br || !br.result) return;
+  const sets = getSets();
+  const set = sets.find(s => s.id === br.setId);
+  if (!set) return;
+  const body = set.bodies[br.bodyIdx];
+  body.originalSlots = Object.assign({}, body.slots); // 書き換え前の全スロットをスナップショット
+  body.originalJa = body.ja || '';
+  body.slots = br.result.slots;
+  body.ja = br.result.ja;
+  set.evaluation = null; // 内容が変わったため採点をやり直す
+  saveSetsList(sets);
+  state.modal = null;
+  state.bodyRewrite = null;
+  state.notice = `Body ${br.bodyIdx + 1} をあなたの論点で書き換えました`;
+  render();
+}
+
+/* ---------- 採点・論点判定についてGeminiと会話する ---------- */
+
+function modalChat() {
+  const set = findSet(state.chatSetId);
+  if (!set) return '';
+  const history = set.chat || [];
+  const messages = history.length
+    ? history.map(m => `<div class="chat-msg ${m.role}">${esc(m.text)}</div>`).join('')
+    : '<p class="hint-text">この構成やスコア、論点について、何でも聞いてください。</p>';
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal chat-modal" data-stop>
+      <h3>💬 Geminiに質問する</h3>
+      <div class="chat-history" id="chatHistory">${messages}</div>
+      ${state.chatBusy ? '<p class="hint-text">Gemini が考え中…</p>' : ''}
+      ${state.chatError ? `<p class="field-error">${esc(state.chatError)}</p>` : ''}
+      <input type="text" id="chatInput" value="${esc(state.chatDraft)}" placeholder="例：なぜ内容のスコアが低いのですか？" ${state.chatBusy ? 'disabled' : ''}>
+      <div class="row">
+        <button class="btn small" data-action="chat-send" ${state.chatBusy ? 'disabled' : ''}>送信</button>
+        ${history.length ? `<button class="btn small ghost" data-action="chat-reset" data-id="${esc(set.id)}">🗑 会話をリセット</button>` : ''}
+        <button class="btn small ghost" data-action="close-modal">閉じる</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function scrollChatToBottom() {
+  const el = document.getElementById('chatHistory');
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+async function doChatSend() {
+  const input = document.getElementById('chatInput');
+  const message = (input ? input.value : state.chatDraft).trim();
+  if (!message) return;
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = 'チャットには合言葉の入力が必要です';
+    render();
+    return;
+  }
+  const setId = state.chatSetId;
+  const sets = getSets();
+  const set = sets.find(s => s.id === setId);
+  if (!set) return;
+  set.chat = set.chat || [];
+  const historyForApi = set.chat.map(m => ({ role: m.role, text: m.text }));
+  set.chat.push({ role: 'user', text: message });
+  saveSetsList(sets);
+  state.chatDraft = '';
+  state.chatBusy = true;
+  state.chatError = null;
+  render();
+  scrollChatToBottom();
+  try {
+    const reply = await chatWithGemini(set, historyForApi, message);
+    const sets2 = getSets();
+    const s2 = sets2.find(s => s.id === setId);
+    if (s2) {
+      s2.chat = s2.chat || [];
+      s2.chat.push({ role: 'model', text: reply });
+      saveSetsList(sets2);
+    }
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+      state.chatBusy = false;
+      render();
+      return;
+    }
+    state.chatError = '送信に失敗しました：' + e.message;
+  }
+  state.chatBusy = false;
+  render();
+  scrollChatToBottom();
 }
 
 function modalThemeAdd() {
@@ -1133,7 +1313,11 @@ $app.addEventListener('click', (ev) => {
   const a = el.dataset.action;
 
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
-  else if (a === 'close-modal') { state.modal = null; state.keywordError = null; state.slotEdit = null; render(); }
+  else if (a === 'close-modal') {
+    state.modal = null; state.keywordError = null; state.slotEdit = null;
+    state.bodyRewrite = null; state.chatError = null;
+    render();
+  }
   else if (a === 'edit-slot') {
     let setId, bodyIdx, slotKey;
     if (el.dataset.from === 'exercise') {
@@ -1274,6 +1458,29 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
   else if (a === 'bs-practice') { startBrainstormPractice(el.dataset.id); }
+  else if (a === 'open-rewrite-body') {
+    state.bodyRewrite = { setId: el.dataset.set, point: el.dataset.point, bodyIdx: null, result: null, error: null, busy: false };
+    state.modal = 'bodyRewrite';
+    render();
+  }
+  else if (a === 'pick-rewrite-body') { doRewriteBody(Number(el.dataset.body)); }
+  else if (a === 'apply-rewrite-body') { applyBodyRewrite(); }
+  else if (a === 'open-chat') {
+    state.chatSetId = el.dataset.id;
+    state.chatDraft = '';
+    state.chatError = null;
+    state.modal = 'chat';
+    render();
+  }
+  else if (a === 'chat-send') { doChatSend(); }
+  else if (a === 'chat-reset') {
+    if (confirm('この会話履歴を削除しますか？')) {
+      const sets = getSets();
+      const set = sets.find(s => s.id === el.dataset.id);
+      if (set) { set.chat = []; saveSetsList(sets); }
+      render();
+    }
+  }
 });
 
 // タブを閉じる・切り替える際に未送信の変更を送っておく
@@ -1291,11 +1498,15 @@ $app.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.id === 'slotEditInput') {
     doReviewSlot();
   }
+  if (ev.key === 'Enter' && ev.target.id === 'chatInput') {
+    doChatSend();
+  }
 });
 
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
 $app.addEventListener('input', (ev) => {
   if (ev.target.id === 'slotEditInput' && state.slotEdit) state.slotEdit.text = ev.target.value;
+  if (ev.target.id === 'chatInput') state.chatDraft = ev.target.value;
 });
 
 document.getElementById('importFile').addEventListener('change', (ev) => {

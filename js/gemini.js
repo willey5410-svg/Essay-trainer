@@ -92,6 +92,35 @@ async function reviewPoints(set, userPoints) {
   return { userPoints: points, pointsReview: data.pointsReview };
 }
 
+/* 論点だしトレーニングで作った論点を核に、Body 1本を丸ごと書き直す */
+async function rewriteBodyWithPoint(set, bodyIndex, userPoint) {
+  const data = await apiCall({ mode: 'rewriteBody', topic: set.topic, stance: set.stance, bodyIndex, userPoint });
+  if (!data || !data.slots) throw new Error('生成結果の形式が不正です');
+  const slots = {};
+  for (const key of SLOT_KEYS) {
+    const v = cleanSlotValue(data.slots[key]);
+    if (!v) throw new Error(`生成結果の形式が不正です（${SLOT_LABELS[key]} が空です）`);
+    slots[key] = v;
+  }
+  return { slots, ja: String(data.ja || '').trim() };
+}
+
+/* 採点・論点判定についてGeminiと会話する（履歴は呼び出し側が保持） */
+async function chatWithGemini(set, history, message) {
+  const data = await apiCall({
+    mode: 'chat',
+    topic: set.topic,
+    stance: set.stance,
+    bodies: set.bodies,
+    evaluation: set.evaluation || null,
+    pointsReview: set.pointsReview || null,
+    history,
+    message,
+  });
+  if (!data || !data.reply) throw new Error('応答の形式が不正です');
+  return data.reply;
+}
+
 /* 自由入力したスロット値の判定・添削 */
 async function reviewSlot(set, bodyIdx, slotKey, userText) {
   const data = await apiCall({
