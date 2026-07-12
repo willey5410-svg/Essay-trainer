@@ -6,7 +6,7 @@ const LS = {
   progress: 'et.progress',
   themes: 'et.customThemes',
   hiddenThemes: 'et.hiddenThemes', // 非表示にしたプリセットテーマの topic 一覧
-  seeded: 'et.seeded.v3', // サンプル内容を更新したらバージョンを上げて再シードする
+  seeded: 'et.seeded.v4', // サンプル内容を更新したらバージョンを上げて再シードする
   dirty: 'et.cloudDirty', // クラウド未送信の変更がある印
   theme: 'et.theme', // auto | light | dark
 };
@@ -336,8 +336,15 @@ function viewBrainstorm() {
       <input type="text" class="bs-input" id="bsPoint0" placeholder="論点① 例：AIが仕事を奪う">
       <input type="text" class="bs-input" id="bsPoint1" placeholder="論点②">
       <input type="text" class="bs-input" id="bsPoint2" placeholder="論点③">
-      <button class="btn small ghost" data-action="bs-hint">💡 観点カテゴリのヒント</button>
-      <div id="bsHints" class="bs-hints" hidden>経済・雇用 ／ 社会・公平性 ／ 倫理・人権 ／ 健康・安全 ／ 環境 ／ 教育・文化 ／ 国際関係</div>
+      <button class="btn small ghost" data-action="bs-hint">💡 観点の作り方のコツ</button>
+      <div id="bsHints" class="bs-hints" hidden>
+        <p><strong>① 中立に書く</strong>：賛成・反対の評価を含めず「何が変わるか」だけを書く<br>
+          <span class="ex-good">○ 労働力構造が再編される</span>／<span class="ex-bad">× 批判的思考力が低下する</span></p>
+        <p><strong>② 構造で考える</strong>：「誰が得するか」ではなく、どの構造・仕組みが変わるかを探す<br>
+          教育構造／労働力構造／情報流通／意思決定／社会制度／評価制度／市場構造／技術開発／資源配分</p>
+        <p><strong>③ 一段抽象化する</strong>：具体的な現象ではなく、一段上の概念で表現する<br>
+          「AIで宿題をする」→「学習プロセスが変化しうる」</p>
+      </div>
       <div class="row">
         <button class="btn" data-action="bs-generate">${practice ? '判定する（Gemini で採点）' : '答え合わせ（Gemini で生成）'}</button>
         <button class="btn ghost" data-action="bs-skip">${practice ? 'キャンセル' : 'スキップして生成'}</button>

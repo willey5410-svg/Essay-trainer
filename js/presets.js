@@ -28,14 +28,14 @@ const PRESET_SETS = [
     bodies: [
       {
         slots: {
-          reason: 'the large-scale replacement of workers by AI',
+          reason: 'the large-scale reshaping of the labor force by AI',
           principle: 'AI handles complex judgment tasks at minimal cost',
           condition: 'companies automate without restraint',
           result: 'widespread structural unemployment',
           keyConcept: 'unregulated automation',
           conclusion: 'destabilizing the labor market',
         },
-        ja: 'まず第一に、AIによる労働者の大規模な代替は極めて重要な要素である。これは、AIが複雑な判断業務を最小限のコストでこなすためである。要するに、企業が歯止めなく自動化を進めれば、広範な構造的失業につながる。したがって、規制なき自動化は労働市場の不安定化に重要な役割を果たす。',
+        ja: 'まず第一に、AIによる労働力の大規模な再編は極めて重要な要素である。これは、AIが複雑な判断業務を最小限のコストでこなすためである。要するに、企業が歯止めなく自動化を進めれば、広範な構造的失業につながる。したがって、規制なき自動化は労働市場の不安定化に重要な役割を果たす。',
       },
       {
         slots: {
@@ -50,14 +50,14 @@ const PRESET_SETS = [
       },
       {
         slots: {
-          reason: 'the danger of unaccountable algorithmic decisions',
+          reason: 'the growing opacity of algorithmic decision-making',
           principle: 'developers cannot fully explain how AI reaches conclusions',
           condition: 'machines make critical judgments alone',
           result: 'errors that nobody can promptly correct',
           keyConcept: 'constant human oversight',
           conclusion: 'keeping advanced technology accountable',
         },
-        ja: 'さらなる論点は、説明責任を欠いたアルゴリズムの決定の危険性である。その主な理由は、開発者でさえAIがどう結論に至るかを完全には説明できないことである。言い換えれば、機械が単独で重要な判断を下せば、誰も即座に修正できない誤りにつながる。したがって、常時の人間による監督は先端技術の説明責任を保つうえで極めて重要である。',
+        ja: 'さらなる論点は、アルゴリズムによる意思決定の不透明さが増していることである。その主な理由は、開発者でさえAIがどう結論に至るかを完全には説明できないことである。言い換えれば、機械が単独で重要な判断を下せば、誰も即座に修正できない誤りにつながる。したがって、常時の人間による監督は先端技術の説明責任を保つうえで極めて重要である。',
       },
     ],
   },
@@ -93,14 +93,14 @@ const PRESET_SETS = [
       },
       {
         slots: {
-          reason: 'the heavy financial burden on young families',
+          reason: 'the rising cost structure facing young families',
           principle: 'soaring education costs discourage couples from having children',
           condition: 'parents anticipate enormous tuition bills',
           result: 'a further decline in the birthrate',
           keyConcept: 'free university education',
           conclusion: 'stabilizing the shrinking population',
         },
-        ja: 'さらなる論点は、若い家庭にのしかかる重い経済的負担である。その主な理由は、高騰する教育費が夫婦に子どもを持つことをためらわせることである。言い換えれば、親が莫大な学費を見込めば、少子化のさらなる進行につながる。したがって、大学教育の無償化は縮小する人口の安定化に極めて重要である。',
+        ja: 'さらなる論点は、若い家庭が直面する費用構造の高まりである。その主な理由は、高騰する教育費が夫婦に子どもを持つことをためらわせることである。言い換えれば、親が莫大な学費を見込めば、少子化のさらなる進行につながる。したがって、大学教育の無償化は縮小する人口の安定化に極めて重要である。',
       },
     ],
   },

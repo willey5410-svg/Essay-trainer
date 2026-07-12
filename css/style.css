@@ -251,9 +251,14 @@ section { margin-bottom: 8px; }
   border-radius: 8px; font-size: 0.95rem; font-family: inherit;
 }
 .bs-hints {
-  background: var(--bg); border-radius: 8px; padding: 8px 12px;
-  font-size: 0.83rem; color: var(--sub); margin-top: 8px;
+  background: var(--bg); border-radius: 8px; padding: 10px 12px;
+  font-size: 0.82rem; color: var(--sub); margin-top: 8px;
 }
+.bs-hints p { margin-bottom: 8px; }
+.bs-hints p:last-child { margin-bottom: 0; }
+.bs-hints strong { color: var(--text); }
+.bs-hints .ex-good { color: var(--green); }
+.bs-hints .ex-bad { color: var(--red); }
 
 /* slot editing */
 .study-line .slot[data-action] { cursor: pointer; }

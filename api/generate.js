@@ -21,9 +21,13 @@ USER'S BRAINSTORMED ARGUMENTS (the learner wrote these in 90 seconds BEFORE seei
 ${points.map((p, i) => `${i + 1}. ${p}`).join('\n')}
 
 Tasks for these arguments:
-- Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check especially whether its direction matches the stance.
-- Report the judgments in a "pointsReview" array (one object per argument, same order). Each comment must be IN JAPANESE, short, and say why it works or how to fix it.
-- If an argument is valid and strong, ADOPT it (rephrased into proper form) as one of your three body arguments so the learner sees their own idea turned into English.` : '';
+- Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check:
+  - Direction: does it point toward the stance?
+  - Neutrality: is it phrased as a neutral description of WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")?
+  - Structural framing: does it name a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"?
+  - Abstraction level: is it one level more abstract than a narrow concrete anecdote?
+- Report the judgments in a "pointsReview" array (one object per argument, same order). Each comment must be IN JAPANESE, short, and say why it works or how to fix it (mention neutrality/structure/abstraction if that's the issue).
+- If an argument is valid and strong, ADOPT it as one of your three body arguments — rephrase it to satisfy the reason-slot principles below (neutral, structural, abstracted) so the learner sees their own idea turned into a proper English argument.` : '';
   const bodiesShape = '{"bodies":[{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","keyConcept":"...","conclusion":"..."},"ja":"..."},{...},{...}]';
   const jsonShape = points.length
     ? bodiesShape + ',"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}\n("verdict" must be one of "valid", "weak", "invalid")'
@@ -46,10 +50,14 @@ Body 3 template:
 "${TEMPLATE_STRINGS[2]}"
 
 Grammar and richness constraints for the slots (CRITICAL — each value must fit its template grammatically):
-- reason: a substantial noun phrase of 5–8 words with meaningful modifiers (e.g. "the large-scale replacement of workers by AI")
-- principle: a full clause of 8–13 words with subject and verb that explains the underlying MECHANISM, not just a restatement (follows "because" / "reason is that")
+- reason: a substantial noun phrase of 5–8 words with meaningful modifiers, describing WHAT structurally changes — three principles, in order of importance:
+  1. NEUTRAL: never bake in a value judgment about whether the change is good or bad (avoid words like "decline", "undermined", "dangerous", "harmed"; describe the change itself — e.g. "the reshaping of the labor force" NOT "the labor force is harmed")
+  2. STRUCTURAL: name the structure/system that changes, not who benefits or loses — e.g. educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation
+  3. ABSTRACT: one level more abstract than the concrete phenomenon in the topic — e.g. "students using AI for homework" → "the learning process being altered"; "more women entering the workforce" → "the labor force being reshaped"
+  (e.g. "the large-scale reshaping of the labor force by AI")
+- principle: a full clause of 8–13 words with subject and verb that explains the underlying MECHANISM — WHY this structural change happens, not just a restatement (follows "because" / "reason is that")
 - condition: a clause of 5–7 words with subject and verb, NO leading conjunction (follows "when" / "whenever" / "if")
-- result: a specific noun phrase of 4–7 words naming a concrete consequence (follows "leads to" / "results in")
+- result: a specific noun phrase of 4–7 words naming the downstream SOCIAL consequence — the "so what?", not merely the first-order effect (e.g. not just "critical thinking declines" but "a reduced ability to adapt to new challenges") (follows "leads to" / "results in")
 - keyConcept: a short noun phrase of 2–4 words
 - conclusion: a gerund phrase or noun phrase of 4–6 words (follows "in" / "for")
 
@@ -232,11 +240,17 @@ ${userPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}
 For reference, here are three model arguments already prepared for this topic (the learner may or may not have seen these before):
 ${existingReasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
+A strong argument follows three principles:
+1. NEUTRAL: it describes WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")
+2. STRUCTURAL: it names a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"
+3. ABSTRACT: it is one level more abstract than a narrow concrete anecdote (e.g. "AI does my homework" → "the learning process is altered")
+
 For EACH of the learner's arguments, judge:
 - Is it a valid, exam-appropriate argument that supports the stance (correct direction)?
 - Is it clearly distinct from the learner's other arguments?
-- verdict: "valid", "weak" (right idea, underdeveloped or unclear), or "invalid" (wrong direction, off-topic, or not really an argument)
-- comment: ONE short sentence IN JAPANESE explaining the verdict and, if not "valid", how to fix it
+- Does it follow the neutral / structural / abstract principles above? If not, say which one is missing.
+- verdict: "valid", "weak" (right idea, underdeveloped, or violates one of the three principles), or "invalid" (wrong direction, off-topic, or not really an argument)
+- comment: ONE short sentence IN JAPANESE explaining the verdict and, if not "valid", how to fix it (mention neutrality/structure/abstraction if that's the issue)
 
 Return ONLY this JSON:
 {"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}`;
