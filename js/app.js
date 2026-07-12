@@ -8,7 +8,16 @@ const LS = {
   hiddenThemes: 'et.hiddenThemes', // 非表示にしたプリセットテーマの topic 一覧
   seeded: 'et.seeded.v3', // サンプル内容を更新したらバージョンを上げて再シードする
   dirty: 'et.cloudDirty', // クラウド未送信の変更がある印
+  theme: 'et.theme', // auto | light | dark
 };
+
+/* テーマ（配色）を <html data-theme> に適用する */
+function applyTheme() {
+  const t = localStorage.getItem(LS.theme) || 'auto';
+  const root = document.documentElement;
+  if (t === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+}
 
 let state = {
   view: 'home',        // home | brainstorm | study | exercise | loading
@@ -539,6 +548,15 @@ function modalSettings() {
         <button class="btn" data-action="save-keyword" data-from="settings" ${state.busyKeyword ? 'disabled' : ''}>${state.busyKeyword ? '確認中…' : '確認して保存'}</button>
         <button class="btn ghost" data-action="close-modal">閉じる</button>
       </div>
+      <hr>
+      <label>テーマ（配色）</label>
+      <div class="seg">
+        ${[['auto', '自動'], ['light', 'ライト'], ['dark', 'ダーク']].map(([v, lbl]) => {
+          const cur = localStorage.getItem(LS.theme) || 'auto';
+          return `<button class="seg-btn${cur === v ? ' active' : ''}" data-action="set-theme" data-theme="${v}">${lbl}</button>`;
+        }).join('')}
+      </div>
+      <p class="hint-text">「自動」は端末の設定（OS のダークモード）に追従します。</p>
       <hr>
       <label>クラウド同期（Vercel Blob）</label>
       <p class="hint-text">状態：${cloudBadgeText() || '未確認'}${CLOUD.lastSync ? `（最終同期 ${new Date(CLOUD.lastSync).toLocaleTimeString()}）` : ''}${CLOUD.error ? ` — ${esc(CLOUD.error)}` : ''}${CLOUD.enabled === false ? ' — Vercel で Blob ストアを接続すると端末間で自動同期されます' : ''}</p>
@@ -1105,6 +1123,11 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'ex-next-body') { startExercise(state.ex.setId, state.ex.bodyIdx + 1); }
   else if (a === 'export-data') { exportData(); }
   else if (a === 'import-data') { document.getElementById('importFile').click(); }
+  else if (a === 'set-theme') {
+    localStorage.setItem(LS.theme, el.dataset.theme);
+    applyTheme();
+    render();
+  }
   else if (a === 'cloud-sync-now') {
     localStorage.setItem(LS.dirty, '1');
     cloudFlush().then(() => { if (state.modal === 'settings') render(); });
@@ -1141,6 +1164,7 @@ document.getElementById('importFile').addEventListener('change', (ev) => {
 
 /* ---------- init ---------- */
 
+applyTheme();
 seedPresets();
 if (!localStorage.getItem(LS.keyword)) state.modal = 'keyword';
 render();
