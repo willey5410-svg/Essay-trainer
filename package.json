@@ -1,0 +1,8 @@
+{
+  "name": "essay-trainer",
+  "private": true,
+  "description": "英検1級 Essay Trainer — サーバーレス関数の依存関係定義（フロントエンドはビルド不要）",
+  "dependencies": {
+    "@vercel/blob": "^2.6.1"
+  }
+}

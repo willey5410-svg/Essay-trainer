@@ -7,6 +7,7 @@ const LS = {
   themes: 'et.customThemes',
   hiddenThemes: 'et.hiddenThemes', // 非表示にしたプリセットテーマの topic 一覧
   seeded: 'et.seeded.v3', // サンプル内容を更新したらバージョンを上げて再シードする
+  dirty: 'et.cloudDirty', // クラウド未送信の変更がある印
 };
 
 let state = {
@@ -52,13 +53,135 @@ function readJSON(key, fallback) {
 /* ---------- storage ---------- */
 
 function getSets() { return readJSON(LS.sets, []); }
-function saveSetsList(sets) { localStorage.setItem(LS.sets, JSON.stringify(sets)); }
+function saveSetsList(sets) { localStorage.setItem(LS.sets, JSON.stringify(sets)); cloudMarkDirty(); }
 function getProgress() { return readJSON(LS.progress, {}); }
-function saveProgress(p) { localStorage.setItem(LS.progress, JSON.stringify(p)); }
+function saveProgress(p) { localStorage.setItem(LS.progress, JSON.stringify(p)); cloudMarkDirty(); }
 function getCustomThemes() { return readJSON(LS.themes, []); }
-function saveCustomThemes(t) { localStorage.setItem(LS.themes, JSON.stringify(t)); }
+function saveCustomThemes(t) { localStorage.setItem(LS.themes, JSON.stringify(t)); cloudMarkDirty(); }
 function getHiddenThemes() { return readJSON(LS.hiddenThemes, []); }
-function saveHiddenThemes(t) { localStorage.setItem(LS.hiddenThemes, JSON.stringify(t)); }
+function saveHiddenThemes(t) { localStorage.setItem(LS.hiddenThemes, JSON.stringify(t)); cloudMarkDirty(); }
+
+/* ---------- クラウド同期（Vercel Blob）----------
+   Blob を正、localStorage をキャッシュ兼オフライン用とする。
+   変更は dirty フラグ＋デバウンスで自動アップロードし、起動時にクラウドから取得する。 */
+
+const CLOUD = { enabled: null, syncing: false, error: null, lastSync: 0, timer: null };
+
+function cloudPayload() {
+  return {
+    sets: getSets(),
+    progress: getProgress(),
+    customThemes: getCustomThemes(),
+    hiddenThemes: getHiddenThemes(),
+    savedAt: Date.now(),
+  };
+}
+
+async function cloudCall(op, data, opts) {
+  const keyword = localStorage.getItem(LS.keyword) || '';
+  let res;
+  try {
+    res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword, op, data }),
+      keepalive: !!(opts && opts.keepalive),
+    });
+  } catch (e) {
+    throw new Error('サーバーに接続できません');
+  }
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 501) { const e = new Error('Blob 未設定'); e.code = 'NOT_CONFIGURED'; throw e; }
+  if (res.status === 401) { const e = new Error('合言葉が不一致'); e.code = 'UNAUTHORIZED'; throw e; }
+  if (!res.ok) throw new Error(body.error || `同期エラー (${res.status})`);
+  return body;
+}
+
+function cloudMarkDirty() {
+  if (CLOUD.enabled === false) return; // Blob 未設定環境ではローカルのみで運用
+  localStorage.setItem(LS.dirty, '1');
+  if (CLOUD.timer) clearTimeout(CLOUD.timer);
+  CLOUD.timer = setTimeout(() => cloudFlush(), 2500);
+}
+
+async function cloudFlush(opts) {
+  if (CLOUD.enabled === false) return;
+  if (!localStorage.getItem(LS.keyword) || !localStorage.getItem(LS.dirty)) return;
+  CLOUD.syncing = true;
+  updateCloudBadge();
+  try {
+    await cloudCall('save', cloudPayload(), opts);
+    localStorage.removeItem(LS.dirty);
+    CLOUD.enabled = true;
+    CLOUD.error = null;
+    CLOUD.lastSync = Date.now();
+  } catch (e) {
+    if (e.code === 'NOT_CONFIGURED') CLOUD.enabled = false;
+    else if (e.code !== 'UNAUTHORIZED') CLOUD.error = e.message;
+  }
+  CLOUD.syncing = false;
+  updateCloudBadge();
+}
+
+/* クラウドのデータをローカルに反映（dirty を立てないよう直接書き込む） */
+function applyCloudData(d) {
+  if (Array.isArray(d.sets)) localStorage.setItem(LS.sets, JSON.stringify(d.sets));
+  if (d.progress && typeof d.progress === 'object') localStorage.setItem(LS.progress, JSON.stringify(d.progress));
+  if (Array.isArray(d.customThemes)) localStorage.setItem(LS.themes, JSON.stringify(d.customThemes));
+  if (Array.isArray(d.hiddenThemes)) localStorage.setItem(LS.hiddenThemes, JSON.stringify(d.hiddenThemes));
+  localStorage.setItem(LS.seeded, '1');
+}
+
+async function cloudInit() {
+  if (!localStorage.getItem(LS.keyword)) return; // 合言葉入力後に呼び直される
+  CLOUD.syncing = true;
+  updateCloudBadge();
+  try {
+    if (localStorage.getItem(LS.dirty)) {
+      // 未送信のローカル変更が残っている場合はローカルを優先してアップロード
+      CLOUD.syncing = false;
+      await cloudFlush();
+      return;
+    }
+    const resp = await cloudCall('load');
+    CLOUD.enabled = true;
+    CLOUD.error = null;
+    CLOUD.lastSync = Date.now();
+    if (resp.data) {
+      applyCloudData(resp.data);
+      render();
+    } else {
+      // クラウドが空：手元のデータを初回アップロード
+      localStorage.setItem(LS.dirty, '1');
+      CLOUD.syncing = false;
+      await cloudFlush();
+      return;
+    }
+  } catch (e) {
+    if (e.code === 'NOT_CONFIGURED') CLOUD.enabled = false;
+    else if (e.code !== 'UNAUTHORIZED') CLOUD.error = e.message;
+  }
+  CLOUD.syncing = false;
+  updateCloudBadge();
+}
+
+function cloudBadgeHtml() {
+  return `<span id="cloudBadge" class="cloud-badge">${cloudBadgeText()}</span>`;
+}
+
+function cloudBadgeText() {
+  if (CLOUD.syncing) return '☁ 同期中…';
+  if (CLOUD.error) return '⚠ 同期エラー';
+  if (CLOUD.enabled === false) return '💾 ローカル保存';
+  if (CLOUD.enabled === true) return '☁ 同期済み';
+  return '';
+}
+
+/* 再レンダリングせずバッジだけ更新する（練習中の画面を乱さないため） */
+function updateCloudBadge() {
+  const el = document.getElementById('cloudBadge');
+  if (el) el.textContent = cloudBadgeText();
+}
 
 /* 画面に表示するテーマ一覧（非表示プリセットを除外し、自作テーマを合流） */
 function visibleThemes() {
@@ -69,8 +192,9 @@ function visibleThemes() {
 function seedPresets() {
   if (localStorage.getItem(LS.seeded)) return;
   // 旧バージョンのサンプルは新しい内容に置き換える（生成済みエッセイは残す）
+  // 注意：dirty を立てない（新端末でクラウドデータをシードで上書きしないため）
   const sets = PRESET_SETS.concat(getSets().filter(s => s.source !== 'preset'));
-  saveSetsList(sets);
+  localStorage.setItem(LS.sets, JSON.stringify(sets));
   localStorage.setItem(LS.seeded, '1');
 }
 
@@ -150,7 +274,10 @@ function viewHome() {
 
   return `<header class="topbar">
       <h1>英検1級 Essay Trainer</h1>
-      <button class="btn ghost" data-action="open-settings">⚙ 設定</button>
+      <div class="topbar-right">
+        ${cloudBadgeHtml()}
+        <button class="btn ghost" data-action="open-settings">⚙ 設定</button>
+      </div>
     </header>
     ${banner()}
     <section>
@@ -413,7 +540,10 @@ function modalSettings() {
         <button class="btn ghost" data-action="close-modal">閉じる</button>
       </div>
       <hr>
+      <label>クラウド同期（Vercel Blob）</label>
+      <p class="hint-text">状態：${cloudBadgeText() || '未確認'}${CLOUD.lastSync ? `（最終同期 ${new Date(CLOUD.lastSync).toLocaleTimeString()}）` : ''}${CLOUD.error ? ` — ${esc(CLOUD.error)}` : ''}${CLOUD.enabled === false ? ' — Vercel で Blob ストアを接続すると端末間で自動同期されます' : ''}</p>
       <div class="row">
+        <button class="btn small ghost" data-action="cloud-sync-now">今すぐ同期</button>
         <button class="btn small ghost" data-action="export-data">データをエクスポート</button>
         <button class="btn small ghost" data-action="import-data">インポート</button>
       </div>
@@ -791,6 +921,7 @@ async function doSaveKeyword(from) {
     state.modal = null;
     state.notice = '合言葉を確認しました。生成機能が利用できます。';
     state.error = null;
+    cloudInit(); // 合言葉が確定したのでクラウドデータを取得
   } catch (e) {
     state.keywordError = e.code === 'UNAUTHORIZED' ? '合言葉が正しくありません' : e.message;
     state.modal = from === 'settings' ? 'settings' : 'keyword';
@@ -974,6 +1105,18 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'ex-next-body') { startExercise(state.ex.setId, state.ex.bodyIdx + 1); }
   else if (a === 'export-data') { exportData(); }
   else if (a === 'import-data') { document.getElementById('importFile').click(); }
+  else if (a === 'cloud-sync-now') {
+    localStorage.setItem(LS.dirty, '1');
+    cloudFlush().then(() => { if (state.modal === 'settings') render(); });
+  }
+});
+
+// タブを閉じる・切り替える際に未送信の変更を送っておく
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (CLOUD.timer) clearTimeout(CLOUD.timer);
+    cloudFlush({ keepalive: true });
+  }
 });
 
 $app.addEventListener('keydown', (ev) => {
@@ -1001,3 +1144,4 @@ document.getElementById('importFile').addEventListener('change', (ev) => {
 seedPresets();
 if (!localStorage.getItem(LS.keyword)) state.modal = 'keyword';
 render();
+cloudInit();
