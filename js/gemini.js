@@ -69,6 +69,13 @@ async function generateEssaySet(theme, stance, userPoints) {
   };
 }
 
+/* 生成済みエッセイの採点（生成とは別リクエストで、Gemini呼び出し1回のみ） */
+async function evaluateEssaySet(set) {
+  const data = await apiCall({ mode: 'evaluate', topic: set.topic, stance: set.stance, bodies: set.bodies });
+  if (!data || !data.evaluation) throw new Error('採点結果の形式が不正です');
+  return data.evaluation;
+}
+
 /* 自由入力したスロット値の判定・添削 */
 async function reviewSlot(set, bodyIdx, slotKey, userText) {
   const data = await apiCall({

@@ -37,6 +37,7 @@ let state = {
   error: null,
   notice: null,
   busyThemes: false,
+  evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
 };
 
 const $app = document.getElementById('app');
@@ -409,10 +410,11 @@ function viewStudy() {
     <div class="topic-head">
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
+      ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
     </div>
     <p class="hint-text">色付きのスロットをタップすると、自分の表現に書き換えられます（Gemini が判定・添削します）。</p>
     ${compareCard(set)}
-    ${set.evaluation ? evalCard(set.evaluation) : ''}
+    ${evalSection(set)}
     ${bodiesHtml}`;
 }
 
@@ -437,7 +439,22 @@ function compareCard(set) {
   </div>`;
 }
 
-function evalCard(ev) {
+/* 採点カード：採点済み／採点中／未採点（採点ボタン表示）の3状態 */
+function evalSection(set) {
+  if (set.evaluation) return evalCard(set);
+  if (state.evaluatingSetId === set.id) {
+    return `<div class="card eval-card">
+      <div class="body-head"><h3>🧪 Gemini 採点</h3><span class="stat">採点中…</span></div>
+    </div>`;
+  }
+  return `<div class="card eval-card">
+    <div class="body-head"><h3>🧪 Gemini 採点</h3></div>
+    <button class="btn small ghost" data-action="eval-now" data-id="${esc(set.id)}">この構成を採点する</button>
+  </div>`;
+}
+
+function evalCard(set) {
+  const ev = set.evaluation;
   const pass = ev.average >= 8;
   return `<div class="card eval-card">
     <div class="body-head">
@@ -450,6 +467,7 @@ function evalCard(ev) {
       ${ev.comments.content ? `<li><strong>内容：</strong>${esc(ev.comments.content)}</li>` : ''}
       ${ev.comments.language ? `<li><strong>英語表現：</strong>${esc(ev.comments.language)}</li>` : ''}
     </ul>
+    ${!pass ? '<p class="hint-text">スコアが低いため、再生成をおすすめします。</p>' : ''}
   </div>`;
 }
 
@@ -687,6 +705,7 @@ function applySlotReplacement() {
   if (body.originalJa === undefined) body.originalJa = body.ja || '';
   body.slots[se.slotKey] = se.result.corrected;
   if (se.result.ja) body.ja = se.result.ja;
+  set.evaluation = null; // 内容が変わったため採点をやり直す
   saveSetsList(sets);
   // 練習中に置き換えた場合は、その空欄を新しい表現で練習し直す
   const ex = state.ex;
@@ -857,6 +876,39 @@ function recordProgress(ex) {
 
 /* ---------- generation flows ---------- */
 
+/* 採点を単独リクエストで実行する（生成とは非同期・別チェーン）。
+   同時に1件までとし、完了時に学習画面を表示中ならその場で更新する。 */
+async function runBackgroundEvaluation(setId) {
+  if (state.evaluatingSetId) return;
+  state.evaluatingSetId = setId;
+  if (state.view === 'study' && state.setId === setId) render();
+  try {
+    const set = findSet(setId);
+    if (set) {
+      const evaluation = await evaluateEssaySet(set);
+      const sets = getSets();
+      const s2 = sets.find(s => s.id === setId);
+      if (s2) { s2.evaluation = evaluation; saveSetsList(sets); }
+    }
+  } catch (e) {
+    // 採点は付加機能のため、失敗時は静かに諦める（「採点する」ボタンから再試行できる）
+  }
+  state.evaluatingSetId = null;
+  if (state.view === 'study' && state.setId === setId) render();
+}
+
+/* 同じテーマ・スタンス・論点で作り直す（現在の構成は削除して差し替える） */
+function regenerateEssay(setId) {
+  const set = findSet(setId);
+  if (!set) return;
+  if (!confirm('この構成を削除し、同じテーマ・立場で新しく作り直しますか？')) return;
+  saveSetsList(getSets().filter(s => s.id !== setId));
+  const progress = getProgress();
+  delete progress[setId];
+  saveProgress(progress);
+  doGenerateEssay({ topic: set.topic, topicJa: set.topicJa }, set.stance, set.userPoints || []);
+}
+
 async function doGenerateEssay(theme, stance, userPoints) {
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
@@ -866,7 +918,7 @@ async function doGenerateEssay(theme, stance, userPoints) {
   }
   state.modal = null;
   state.view = 'loading';
-  state.loadingText = 'Gemini が例文を生成し、試験官として採点中…（論点の判定と再生成を含め、最大1分ほどかかることがあります）';
+  state.loadingText = 'Gemini が例文を生成中…（論点の判定を含め、通常10〜20秒ほどです）';
   render();
   try {
     const set = await generateEssaySet(theme, stance, userPoints);
@@ -877,6 +929,7 @@ async function doGenerateEssay(theme, stance, userPoints) {
     state.showJa = {};
     state.view = 'study';
     state.error = null;
+    runBackgroundEvaluation(set.id); // 採点は別リクエストでバックグラウンド実行（生成をブロックしない）
   } catch (e) {
     state.view = 'home';
     if (e.code === 'UNAUTHORIZED') {
@@ -1037,6 +1090,7 @@ $app.addEventListener('click', (ev) => {
       for (const k of Object.keys(body.originalSlots)) body.slots[k] = body.originalSlots[k];
       delete body.originalSlots;
       if (body.originalJa !== undefined) { body.ja = body.originalJa; delete body.originalJa; }
+      set.evaluation = null; // 内容が変わったため採点をやり直す
       saveSetsList(sets);
       state.notice = '元の模範解答に戻しました';
       render();
@@ -1132,6 +1186,8 @@ $app.addEventListener('click', (ev) => {
     localStorage.setItem(LS.dirty, '1');
     cloudFlush().then(() => { if (state.modal === 'settings') render(); });
   }
+  else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
+  else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
 });
 
 // タブを閉じる・切り替える際に未送信の変更を送っておく

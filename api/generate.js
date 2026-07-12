@@ -86,12 +86,6 @@ Return ONLY this JSON structure:
 }
 
 const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'keyConcept', 'conclusion'];
-/* 各Bodyテンプレートの固定部分の語数（js/templates.js の固定テキストと一致させること） */
-const FIXED_WORDS = [22, 18, 20];
-const WORD_MIN = 45;
-const WORD_MAX = 55;
-/* 採点の合格ライン（3観点の平均） */
-const EVAL_THRESHOLD = 8;
 
 /* 評価用にサーバー側でも Body を組み立てるためのテンプレート文字列 */
 const TEMPLATE_STRINGS = [
@@ -100,10 +94,20 @@ const TEMPLATE_STRINGS = [
   'A further point is {reason}. The primary reason is that {principle}. In other words, if {condition}, this leads to {result}. Accordingly, {keyConcept} is vital for {conclusion}.',
 ];
 
-function assembleEssay(parsed) {
-  if (!bodyWordTotals(parsed)) return null;
-  return parsed.bodies.slice(0, 3).map((b, i) =>
-    TEMPLATE_STRINGS[i].replace(/\{(\w+)\}/g, (m, key) => String(b.slots[key] || '').trim()));
+/* bodies（[{slots:{...}}, ...] 形式）からテンプレートに沿った完成文を組み立てる。
+   構造が不正（3件揃っていない・スロット欠落）なら null */
+function assembleEssay(bodies) {
+  if (!Array.isArray(bodies) || bodies.length < 3) return null;
+  const paragraphs = [];
+  for (let i = 0; i < 3; i++) {
+    const slots = bodies[i] && bodies[i].slots;
+    if (!slots) return null;
+    for (const key of SLOT_KEYS) {
+      if (!String(slots[key] || '').trim()) return null;
+    }
+    paragraphs.push(TEMPLATE_STRINGS[i].replace(/\{(\w+)\}/g, (m, key) => String(slots[key] || '').trim()));
+  }
+  return paragraphs;
 }
 
 function buildEvalPrompt(topic, stance, paragraphs) {
@@ -145,22 +149,6 @@ function normalizeEval(raw) {
     language: String(c.language || '').slice(0, 500),
   };
   return ev;
-}
-
-/* 組み立て後の各Bodyの総語数。構造が不正なら null */
-function bodyWordTotals(parsed) {
-  if (!parsed || !Array.isArray(parsed.bodies) || parsed.bodies.length < 3) return null;
-  const totals = [];
-  for (let i = 0; i < 3; i++) {
-    const slots = parsed.bodies[i] && parsed.bodies[i].slots;
-    if (!slots) return null;
-    let n = FIXED_WORDS[i];
-    for (const key of SLOT_KEYS) {
-      n += String(slots[key] || '').trim().split(/\s+/).filter(Boolean).length;
-    }
-    totals.push(n);
-  }
-  return totals;
 }
 
 async function callGemini(prompt, apiKey, model, temperature) {
@@ -290,7 +278,8 @@ module.exports = async (req, res) => {
     }
   }
 
-  let prompt;
+  // 各モードは Gemini 呼び出し1回のみで完結させる（Vercel の関数タイムアウト対策）。
+  // 生成と採点を別リクエストに分離しているのもこのため。
   if (mode === 'essay') {
     if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
       return res.status(400).json({ error: 'topic / stance が不正です' });
@@ -298,55 +287,45 @@ module.exports = async (req, res) => {
     const points = Array.isArray(userPoints)
       ? userPoints.map(p => String(p).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
       : [];
-    prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance, points);
-  } else if (mode === 'themes') {
-    const existing = Array.isArray(existingTopics)
-      ? existingTopics.slice(0, 100).map(t => String(t).slice(0, 300))
-      : [];
-    prompt = buildThemePrompt(existing);
-  } else {
-    return res.status(400).json({ error: 'mode が不正です' });
-  }
-
-  if (mode === 'themes') {
+    const prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance, points);
     try {
-      return res.status(200).json(await callGemini(prompt, apiKey, model));
+      const parsed = await callGemini(prompt, apiKey, model);
+      if (!assembleEssay(parsed.bodies)) {
+        return res.status(502).json({ error: '生成結果の形式が不正です（スロットが不足しています）' });
+      }
+      return res.status(200).json({ bodies: parsed.bodies, pointsReview: normalizePointsReview(parsed.pointsReview) });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
   }
 
-  // essay モード：生成 →（語数リトライ）→ 採点 → 平均が閾値未満なら講評付きで1回だけ再生成
-  try {
-    const result = await essayPipeline(prompt, topic, stance, apiKey, model);
-    return res.status(200).json(result);
-  } catch (e) {
-    return res.status(e.status || 502).json({ error: e.message });
-  }
-};
-
-/* 生成1回分（語数制約チェック＋1回リトライ込み） */
-async function genBodiesOnce(prompt, apiKey, model) {
-  let parsed = await callGemini(prompt, apiKey, model);
-  const totals = bodyWordTotals(parsed);
-  if (totals && totals.some(t => t < WORD_MIN || t > WORD_MAX)) {
-    const feedback = `\n\nIMPORTANT FEEDBACK: In your previous attempt the assembled paragraphs totaled ${totals.join(', ')} words. Regenerate so that EVERY assembled paragraph stays within ${WORD_MIN}–${WORD_MAX} words (target 45–50). Adjust the length of your slot values accordingly.`;
+  if (mode === 'evaluate') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const paragraphs = assembleEssay(req.body.bodies);
+    if (!paragraphs) return res.status(400).json({ error: 'bodies が不正です' });
     try {
-      const retry = await callGemini(prompt + feedback, apiKey, model);
-      if (bodyWordTotals(retry)) parsed = retry;
-    } catch (e) { /* リトライ失敗時は初回結果をそのまま返す */ }
+      const evaluation = await evaluateEssay(topic.trim().slice(0, 300), stance, paragraphs, apiKey, model);
+      return res.status(200).json({ evaluation });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
   }
-  return parsed;
-}
 
-/* 採点（失敗しても生成結果は返せるよう、エラー時は null） */
-async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
-  try {
-    return normalizeEval(await callGemini(buildEvalPrompt(topic, stance, paragraphs), apiKey, model, 0.2));
-  } catch (e) {
-    return null;
+  if (mode === 'themes') {
+    const existing = Array.isArray(existingTopics)
+      ? existingTopics.slice(0, 100).map(t => String(t).slice(0, 300))
+      : [];
+    try {
+      return res.status(200).json(await callGemini(buildThemePrompt(existing), apiKey, model));
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
   }
-}
+
+  return res.status(400).json({ error: 'mode が不正です' });
+};
 
 /* ユーザー論点の判定結果を検証・整形する */
 function normalizePointsReview(raw) {
@@ -358,35 +337,13 @@ function normalizePointsReview(raw) {
   }));
 }
 
-async function essayPipeline(prompt, topic, stance, apiKey, model) {
-  const first = await genBodiesOnce(prompt, apiKey, model);
-  const paragraphs = assembleEssay(first);
-  if (!paragraphs) return first; // 構造が不正な場合はクライアント側の検証に委ねる
-  const review1 = normalizePointsReview(first.pointsReview);
-
-  const eval1 = await evaluateEssay(topic, stance, paragraphs, apiKey, model);
-  if (!eval1) return { bodies: first.bodies, evaluation: null, attempts: 1, pointsReview: review1 };
-  if (eval1.average >= EVAL_THRESHOLD) {
-    return { bodies: first.bodies, evaluation: eval1, attempts: 1, pointsReview: review1 };
+async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
+  const raw = await callGemini(buildEvalPrompt(topic, stance, paragraphs), apiKey, model, 0.2);
+  const ev = normalizeEval(raw);
+  if (!ev) {
+    const err = new Error('採点結果の形式が不正です');
+    err.status = 502;
+    throw err;
   }
-
-  // 閾値未満：試験官の講評をフィードバックして1回だけ再生成し、良い方を採用する
-  const feedback = `\n\nEXAMINER FEEDBACK on your previous attempt (scores out of 10 — structure ${eval1.structure}, content ${eval1.content}, language ${eval1.language}):
-- structure: ${eval1.comments.structure}
-- content: ${eval1.comments.content}
-- language: ${eval1.comments.language}
-Regenerate the slot values to address these weaknesses — especially concrete, specific examples and clear logical development of WHY each argument supports the stance — while STRICTLY keeping every template, grammar, and word-count constraint above.`;
-
-  let second = null;
-  let eval2 = null;
-  try {
-    second = await genBodiesOnce(prompt + feedback, apiKey, model);
-    const paragraphs2 = assembleEssay(second);
-    if (paragraphs2) eval2 = await evaluateEssay(topic, stance, paragraphs2, apiKey, model);
-  } catch (e) { /* 再生成に失敗した場合は初回結果を返す */ }
-
-  if (second && eval2 && eval2.average >= eval1.average) {
-    return { bodies: second.bodies, evaluation: eval2, attempts: 2, pointsReview: normalizePointsReview(second.pointsReview) || review1 };
-  }
-  return { bodies: first.bodies, evaluation: eval1, attempts: 2, pointsReview: review1 };
+  return ev;
 }
