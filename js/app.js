@@ -5,6 +5,7 @@ const LS = {
   sets: 'et.sets',
   progress: 'et.progress',
   themes: 'et.customThemes',
+  hiddenThemes: 'et.hiddenThemes', // 非表示にしたプリセットテーマの topic 一覧
   seeded: 'et.seeded.v3', // サンプル内容を更新したらバージョンを上げて再シードする
 };
 
@@ -17,6 +18,8 @@ let state = {
   pendingStance: null,
   bsTimerId: null,
   slotEdit: null,      // {setId, bodyIdx, slotKey, from, text, result, error, busy}
+  themeAddError: null,
+  themeDraft: { en: '', ja: '', cat: null },
   loadingText: '',
   setId: null,
   showJa: {},
@@ -54,6 +57,14 @@ function getProgress() { return readJSON(LS.progress, {}); }
 function saveProgress(p) { localStorage.setItem(LS.progress, JSON.stringify(p)); }
 function getCustomThemes() { return readJSON(LS.themes, []); }
 function saveCustomThemes(t) { localStorage.setItem(LS.themes, JSON.stringify(t)); }
+function getHiddenThemes() { return readJSON(LS.hiddenThemes, []); }
+function saveHiddenThemes(t) { localStorage.setItem(LS.hiddenThemes, JSON.stringify(t)); }
+
+/* 画面に表示するテーマ一覧（非表示プリセットを除外し、自作テーマを合流） */
+function visibleThemes() {
+  const hidden = getHiddenThemes();
+  return PRESET_THEMES.filter(t => !hidden.includes(t.topic)).concat(getCustomThemes());
+}
 
 function seedPresets() {
   if (localStorage.getItem(LS.seeded)) return;
@@ -78,6 +89,7 @@ function render() {
   if (state.modal === 'stance') html += modalStance();
   if (state.modal === 'keyword') html += modalKeyword();
   if (state.modal === 'slotEdit') html += modalSlotEdit();
+  if (state.modal === 'themeAdd') html += modalThemeAdd();
   $app.innerHTML = html;
 }
 
@@ -119,18 +131,22 @@ function viewHome() {
     </div>`;
   }).join('') || '<p class="empty">まだエッセイがありません。下のテーマから作成してください。</p>';
 
-  const themes = PRESET_THEMES.concat(getCustomThemes());
+  const themes = visibleThemes();
   const cats = [...new Set(themes.map(t => t.category))];
   const themeHtml = cats.map(cat => {
     const items = themes.filter(t => t.category === cat).map(t => {
       const idx = themes.indexOf(t);
-      return `<button class="theme-item" data-action="pick-theme" data-idx="${idx}">
-        <span class="theme-en">${esc(t.topic)}</span>
-        <span class="theme-ja">${esc(t.topicJa || '')}</span>
-      </button>`;
+      return `<div class="theme-item">
+        <button class="theme-pick" data-action="pick-theme" data-idx="${idx}">
+          <span class="theme-en">${esc(t.topic)}</span>
+          <span class="theme-ja">${esc(t.topicJa || '')}</span>
+        </button>
+        <button class="theme-del" data-action="delete-theme" data-idx="${idx}" title="このテーマを削除">×</button>
+      </div>`;
     }).join('');
     return `<div class="theme-group"><h3>${esc(cat)}</h3>${items}</div>`;
   }).join('');
+  const hiddenCount = getHiddenThemes().length;
 
   return `<header class="topbar">
       <h1>英検1級 Essay Trainer</h1>
@@ -145,9 +161,11 @@ function viewHome() {
       <h2>✨ 新しいテーマを選ぶ</h2>
       <p class="hint-text">テーマを選ぶと賛成/反対を選択後、Gemini が Body 1〜3 の例文を生成します。</p>
       ${themeHtml}
+      <button class="btn wide ghost" data-action="open-add-theme">＋ テーマを自分で追加</button>
       <button class="btn wide" data-action="gen-themes" ${state.busyThemes ? 'disabled' : ''}>
         ${state.busyThemes ? '生成中…' : '🤖 Gemini でテーマ案を追加生成'}
       </button>
+      ${hiddenCount ? `<button class="btn small ghost wide" data-action="restore-themes">非表示にしたプリセットテーマを復元（${hiddenCount}件）</button>` : ''}
     </section>`;
 }
 
@@ -538,6 +556,71 @@ function applySlotReplacement() {
   render();
 }
 
+function modalThemeAdd() {
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>＋ テーマを自分で追加</h3>
+      <label>英語のテーマ（必須）</label>
+      <input type="text" id="inpThemeEn" value="${esc(state.themeDraft.en)}" placeholder="例：Should Japan introduce a four-day workweek?">
+      <label>日本語訳（任意）</label>
+      <input type="text" id="inpThemeJa" value="${esc(state.themeDraft.ja)}" placeholder="例：日本は週休3日制を導入すべきか">
+      <label>カテゴリ</label>
+      <select id="inpThemeCat">
+        ${CATEGORIES.map(c => `<option value="${esc(c)}"${c === state.themeDraft.cat ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+      </select>
+      ${state.themeAddError ? `<p class="field-error">${esc(state.themeAddError)}</p>` : ''}
+      <div class="row">
+        <button class="btn" data-action="save-theme">追加する</button>
+        <button class="btn ghost" data-action="close-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function doSaveTheme() {
+  const en = (document.getElementById('inpThemeEn') || {}).value?.trim() || '';
+  const ja = (document.getElementById('inpThemeJa') || {}).value?.trim() || '';
+  const cat = (document.getElementById('inpThemeCat') || {}).value || CATEGORIES[0];
+  state.themeDraft = { en, ja, cat };
+  if (!en) {
+    state.themeAddError = '英語のテーマを入力してください';
+    render();
+    return;
+  }
+  const exists = PRESET_THEMES.concat(getCustomThemes())
+    .some(t => t.topic.toLowerCase() === en.toLowerCase());
+  if (exists) {
+    state.themeAddError = '同じテーマが既に存在します';
+    render();
+    return;
+  }
+  const custom = getCustomThemes();
+  custom.push({ topic: en, topicJa: ja, category: cat });
+  saveCustomThemes(custom);
+  state.modal = null;
+  state.themeAddError = null;
+  state.themeDraft = { en: '', ja: '', cat: CATEGORIES[0] };
+  state.notice = 'テーマを追加しました';
+  render();
+}
+
+function deleteTheme(idx) {
+  const theme = visibleThemes()[idx];
+  if (!theme || !confirm(`テーマ「${theme.topic}」を削除しますか？`)) return;
+  const custom = getCustomThemes();
+  const ci = custom.findIndex(t => t.topic === theme.topic);
+  if (ci >= 0) {
+    custom.splice(ci, 1);
+    saveCustomThemes(custom);
+  } else {
+    // プリセットは削除できないため非表示リストに入れる（復元可能）
+    const hidden = getHiddenThemes();
+    if (!hidden.includes(theme.topic)) hidden.push(theme.topic);
+    saveHiddenThemes(hidden);
+  }
+  render();
+}
+
 /* ---------- exercise logic ---------- */
 
 function startExercise(setId, bodyIdx) {
@@ -815,9 +898,21 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'dismiss-error') { state.error = null; render(); }
   else if (a === 'dismiss-notice') { state.notice = null; render(); }
   else if (a === 'pick-theme') {
-    const themes = PRESET_THEMES.concat(getCustomThemes());
-    state.pendingTheme = themes[Number(el.dataset.idx)];
+    state.pendingTheme = visibleThemes()[Number(el.dataset.idx)];
     state.modal = 'stance';
+    render();
+  }
+  else if (a === 'open-add-theme') {
+    state.themeDraft = { en: '', ja: '', cat: CATEGORIES[0] };
+    state.themeAddError = null;
+    state.modal = 'themeAdd';
+    render();
+  }
+  else if (a === 'save-theme') { doSaveTheme(); }
+  else if (a === 'delete-theme') { deleteTheme(Number(el.dataset.idx)); }
+  else if (a === 'restore-themes') {
+    saveHiddenThemes([]);
+    state.notice = '非表示にしていたプリセットテーマを復元しました';
     render();
   }
   else if (a === 'choose-stance') {
