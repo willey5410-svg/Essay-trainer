@@ -6,7 +6,7 @@
      BLOB_READ_WRITE_TOKEN  … Vercel Blob ストアのトークン（Storage 連携で自動設定） */
 
 const crypto = require('crypto');
-const { put, list } = require('@vercel/blob');
+const { put, get } = require('@vercel/blob');
 
 const MAX_BYTES = 4 * 1024 * 1024; // 保存データの上限 4MB
 
@@ -43,11 +43,17 @@ module.exports = async (req, res) => {
 
   try {
     if (op === 'load') {
-      const { blobs } = await list({ prefix: dataPath(), limit: 1 });
-      if (!blobs.length) return res.status(200).json({ data: null });
-      const r = await fetch(blobs[0].url + '?ts=' + Date.now(), { cache: 'no-store' });
-      if (!r.ok) return res.status(502).json({ error: 'Blob の読み込みに失敗しました' });
-      return res.status(200).json({ data: await r.json(), updatedAt: blobs[0].uploadedAt });
+      let result;
+      try {
+        // 認証付きで直接読み出す（公開URLを介さない）。useCache:false で常に最新を取得
+        result = await get(dataPath(), { access: 'private', useCache: false });
+      } catch (e) {
+        if (isNotFound(e)) return res.status(200).json({ data: null });
+        throw e;
+      }
+      if (!result || result.statusCode !== 200) return res.status(200).json({ data: null });
+      const parsed = await new Response(result.stream).json();
+      return res.status(200).json({ data: parsed, updatedAt: result.blob && result.blob.uploadedAt });
     }
 
     if (op === 'save') {
@@ -59,11 +65,10 @@ module.exports = async (req, res) => {
         return res.status(413).json({ error: 'データが大きすぎます（4MB上限）' });
       }
       await put(dataPath(), json, {
-        access: 'public',
+        access: 'private',
         addRandomSuffix: false,
         allowOverwrite: true,
         contentType: 'application/json',
-        cacheControlMaxAge: 60,
       });
       return res.status(200).json({ ok: true, savedAt: Date.now() });
     }
@@ -73,3 +78,7 @@ module.exports = async (req, res) => {
     return res.status(502).json({ error: 'Blob 操作に失敗しました: ' + e.message });
   }
 };
+
+function isNotFound(e) {
+  return e && (e.name === 'BlobNotFoundError' || /not.?found/i.test(e.message || ''));
+}
