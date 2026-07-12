@@ -26,6 +26,8 @@ let state = {
   busyKeyword: false,
   pendingTheme: null,
   pendingStance: null,
+  bsMode: 'generate', // generate（新規生成前）| practice（既存エッセイへの反復練習）
+  bsSetId: null,
   bsTimerId: null,
   slotEdit: null,      // {setId, bodyIdx, slotKey, from, text, result, error, busy}
   themeAddError: null,
@@ -311,14 +313,20 @@ function viewHome() {
 const BS_SECONDS = 90;
 
 function viewBrainstorm() {
-  const t = state.pendingTheme;
+  const practice = state.bsMode === 'practice';
+  const set = practice ? findSet(state.bsSetId) : null;
+  if (practice && !set) { state.view = 'home'; return viewHome(); }
+  const topic = practice ? set.topic : state.pendingTheme.topic;
+  const topicJa = practice ? set.topicJa : state.pendingTheme.topicJa;
+  const stance = practice ? set.stance : state.pendingStance;
   return `<header class="topbar">
-      <button class="btn ghost" data-action="go-home">← 中止</button>
+      <button class="btn ghost" data-action="bs-cancel">← 中止</button>
       <span class="topbar-title">論点出しトレーニング</span>
     </header>
+    ${banner()}
     <div class="topic-head">
-      <h2>${esc(t.topic)}</h2>
-      <p class="set-sub">${esc(t.topicJa || '')} ${stanceBadge(state.pendingStance)}</p>
+      <h2>${esc(topic)}</h2>
+      <p class="set-sub">${esc(topicJa || '')} ${stanceBadge(stance)}</p>
     </div>
     <div class="card">
       <div class="body-head">
@@ -331,11 +339,19 @@ function viewBrainstorm() {
       <button class="btn small ghost" data-action="bs-hint">💡 観点カテゴリのヒント</button>
       <div id="bsHints" class="bs-hints" hidden>経済・雇用 ／ 社会・公平性 ／ 倫理・人権 ／ 健康・安全 ／ 環境 ／ 教育・文化 ／ 国際関係</div>
       <div class="row">
-        <button class="btn" data-action="bs-generate">答え合わせ（Gemini で生成）</button>
-        <button class="btn ghost" data-action="bs-skip">スキップして生成</button>
+        <button class="btn" data-action="bs-generate">${practice ? '判定する（Gemini で採点）' : '答え合わせ（Gemini で生成）'}</button>
+        <button class="btn ghost" data-action="bs-skip">${practice ? 'キャンセル' : 'スキップして生成'}</button>
       </div>
-      <p class="hint-text">入力した論点は Gemini が有効性を判定し、生成された論点と並べて比較表示されます。日本語でもOKです。</p>
+      <p class="hint-text">入力した論点は Gemini が有効性を判定し、${practice ? 'このエッセイの観点と並べて比較表示されます' : '生成された論点と並べて比較表示されます'}。日本語でもOKです。</p>
     </div>`;
+}
+
+/* 生成済みエッセイに対する論点だしの反復練習を開始する（本文は変更しない） */
+function startBrainstormPractice(setId) {
+  state.bsMode = 'practice';
+  state.bsSetId = setId;
+  state.error = null;
+  startBrainstorm();
 }
 
 function startBrainstorm() {
@@ -419,7 +435,14 @@ function viewStudy() {
 }
 
 function compareCard(set) {
-  if (!set.userPoints || !set.userPoints.length) return '';
+  const practiceBtn = `<button class="btn small ghost" data-action="bs-practice" data-id="${esc(set.id)}">🧠 論点だしトレーニングをもう一度</button>`;
+  if (!set.userPoints || !set.userPoints.length) {
+    return `<div class="card compare-card">
+      <h3>🧠 論点だしトレーニング</h3>
+      <p class="hint-text">このテーマで自分なりの論点を3つ考える練習ができます。</p>
+      ${practiceBtn}
+    </div>`;
+  }
   const badge = v => v === 'valid' ? '<span class="verdict valid">✅ 有効</span>'
     : v === 'invalid' ? '<span class="verdict invalid">✖ 要注意</span>'
     : '<span class="verdict weak">△ 弱い</span>';
@@ -436,6 +459,7 @@ function compareCard(set) {
       <div><h4>あなたの論点</h4><ol>${mine}</ol></div>
       <div><h4>Gemini の論点</h4><ol>${gemini}</ol></div>
     </div>
+    <div class="row">${practiceBtn}</div>
   </div>`;
 }
 
@@ -943,6 +967,51 @@ async function doGenerateEssay(theme, stance, userPoints) {
   render();
 }
 
+/* 論点だしトレーニングの反復練習：エッセイ本文は変えず、最新の判定結果だけ上書き保存する */
+async function doReviewPointsPractice(points) {
+  const setId = state.bsSetId;
+  if (!points.length) {
+    state.view = 'study';
+    state.setId = setId;
+    state.error = '論点を1つ以上入力してください';
+    render();
+    return;
+  }
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '判定には合言葉の入力が必要です';
+    render();
+    return;
+  }
+  state.modal = null;
+  state.view = 'loading';
+  state.loadingText = 'Gemini が論点を判定中…';
+  render();
+  try {
+    const set = findSet(setId);
+    const result = await reviewPoints(set, points);
+    const sets = getSets();
+    const s2 = sets.find(s => s.id === setId);
+    if (s2) {
+      s2.userPoints = result.userPoints;
+      s2.pointsReview = result.pointsReview;
+      saveSetsList(sets);
+    }
+    state.error = null;
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      state.error = '判定に失敗しました：' + e.message;
+    }
+  }
+  state.view = 'study';
+  state.setId = setId;
+  render();
+}
+
 async function doGenerateThemes() {
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
@@ -1126,6 +1195,7 @@ $app.addEventListener('click', (ev) => {
       return;
     }
     state.pendingStance = el.dataset.stance;
+    state.bsMode = 'generate';
     startBrainstorm();
   }
   else if (a === 'bs-hint') {
@@ -1135,11 +1205,19 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'bs-generate') {
     const points = collectBrainstormPoints();
     stopBsTimer();
-    doGenerateEssay(state.pendingTheme, state.pendingStance, points);
+    if (state.bsMode === 'practice') doReviewPointsPractice(points);
+    else doGenerateEssay(state.pendingTheme, state.pendingStance, points);
   }
   else if (a === 'bs-skip') {
     stopBsTimer();
-    doGenerateEssay(state.pendingTheme, state.pendingStance, []);
+    if (state.bsMode === 'practice') { state.view = 'study'; state.setId = state.bsSetId; render(); }
+    else doGenerateEssay(state.pendingTheme, state.pendingStance, []);
+  }
+  else if (a === 'bs-cancel') {
+    stopBsTimer();
+    if (state.bsMode === 'practice') { state.view = 'study'; state.setId = state.bsSetId; }
+    else state.view = 'home';
+    render();
   }
   else if (a === 'gen-themes') { doGenerateThemes(); }
   else if (a === 'open-set') {
@@ -1188,6 +1266,7 @@ $app.addEventListener('click', (ev) => {
   }
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
+  else if (a === 'bs-practice') { startBrainstormPractice(el.dataset.id); }
 });
 
 // タブを閉じる・切り替える際に未送信の変更を送っておく

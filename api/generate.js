@@ -219,6 +219,29 @@ Return ONLY this JSON:
 {"verdict":"ok","corrected":"...","explanation":"...","ja":"..."}`;
 }
 
+/* 論点だしトレーニング（生成済みエッセイに対する反復練習）の判定プロンプト */
+function buildReviewPointsPrompt(topic, stance, userPoints, existingReasons) {
+  return `You are an expert coach for the EIKEN Grade 1 English essay brainstorming stage.
+
+TOPIC: ${topic}
+STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
+
+A learner is practicing coming up with THREE distinct arguments for this stance in 90 seconds, in the style "A does B" (a verb-based claim, later nominalized when writing). They may write in Japanese or English. Here are their arguments:
+${userPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}
+
+For reference, here are three model arguments already prepared for this topic (the learner may or may not have seen these before):
+${existingReasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+For EACH of the learner's arguments, judge:
+- Is it a valid, exam-appropriate argument that supports the stance (correct direction)?
+- Is it clearly distinct from the learner's other arguments?
+- verdict: "valid", "weak" (right idea, underdeveloped or unclear), or "invalid" (wrong direction, off-topic, or not really an argument)
+- comment: ONE short sentence IN JAPANESE explaining the verdict and, if not "valid", how to fix it
+
+Return ONLY this JSON:
+{"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}`;
+}
+
 function keywordMatches(given, expected) {
   const a = Buffer.from(String(given));
   const b = Buffer.from(String(expected));
@@ -294,6 +317,30 @@ module.exports = async (req, res) => {
         return res.status(502).json({ error: '生成結果の形式が不正です（スロットが不足しています）' });
       }
       return res.status(200).json({ bodies: parsed.bodies, pointsReview: normalizePointsReview(parsed.pointsReview) });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'reviewPoints') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const points = Array.isArray(userPoints)
+      ? userPoints.map(p => String(p).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
+      : [];
+    if (!points.length) return res.status(400).json({ error: '論点が入力されていません' });
+    const reasons = Array.isArray(req.body.existingReasons)
+      ? req.body.existingReasons.map(r => String(r).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
+      : [];
+    if (reasons.length < 3) return res.status(400).json({ error: 'existingReasons が不正です' });
+    try {
+      const raw = await callGemini(
+        buildReviewPointsPrompt(topic.trim().slice(0, 300), stance, points, reasons),
+        apiKey, model, 0.3);
+      const review = normalizePointsReview(raw && raw.pointsReview);
+      if (!review || !review.length) return res.status(502).json({ error: '判定結果の形式が不正です' });
+      return res.status(200).json({ pointsReview: review });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

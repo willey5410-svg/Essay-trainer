@@ -76,6 +76,22 @@ async function evaluateEssaySet(set) {
   return data.evaluation;
 }
 
+/* 論点だしトレーニングの反復練習（エッセイ本文は変更しない） */
+async function reviewPoints(set, userPoints) {
+  const points = (userPoints || []).map(p => String(p).trim()).filter(Boolean).slice(0, 3);
+  const data = await apiCall({
+    mode: 'reviewPoints',
+    topic: set.topic,
+    stance: set.stance,
+    userPoints: points,
+    existingReasons: set.bodies.map(b => b.slots.reason),
+  });
+  if (!data || !Array.isArray(data.pointsReview) || !data.pointsReview.length) {
+    throw new Error('判定結果の形式が不正です');
+  }
+  return { userPoints: points, pointsReview: data.pointsReview };
+}
+
 /* 自由入力したスロット値の判定・添削 */
 async function reviewSlot(set, bodyIdx, slotKey, userText) {
   const data = await apiCall({
