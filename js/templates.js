@@ -11,6 +11,37 @@ const BODY_ROLES = [
   { name: 'Body 3', type: '譲歩反駁型', functions: ['主張', '譲歩', '反駁', '決着'] },
 ];
 
+/* テンプレート由来の定型表現。学習画面でこれ以外（＝生成された内容部分）を色分け表示する。
+   正規表現の選択肢は先頭から順に試されるため、長いフレーズを先に並べること。 */
+const TEMPLATE_PHRASES = [
+  'While some may argue that',
+  'will become intolerable',
+  'this is not the case',
+  'One reason is that',
+  'It is true that',
+  'This means that',
+  'This is because',
+  'This will benefit',
+  'A third factor is',
+  'Another reason is',
+  'For this reason,',
+  'inevitably leads to',
+  'Sooner or later,',
+  'This burden on',
+  'For example,',
+  'First of all,',
+  'As a result,',
+  'In fact,',
+  'Secondly,',
+  'Therefore,',
+  'Moreover,',
+  'However,',
+  'Finally,',
+  'Lastly,',
+  'such as',
+  'also grows',
+];
+
 /* body.sentences（文の配列）を1つの段落テキストに連結する */
 function bodyText(body) {
   return (body && Array.isArray(body.sentences) ? body.sentences : [])

@@ -167,6 +167,8 @@ section { margin-bottom: 8px; }
   font-size: 0.68rem; color: var(--accent); background: var(--accent-soft);
   border-radius: 6px; padding: 1px 6px; text-align: center; vertical-align: 1px;
 }
+/* テンプレ定型表現以外（＝テーマごとに変わる生成内容）の色分け */
+.free { color: var(--accent); }
 .stat { color: var(--sub); font-size: 0.8rem; }
 .ja-text {
   background: var(--bg); border-radius: 8px; padding: 10px 12px;

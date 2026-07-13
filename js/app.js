@@ -53,6 +53,16 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/* テンプレート定型表現の検出用正規表現（1つの捕捉グループを持つので split で偶数=自由部/奇数=定型部になる） */
+const TPL_RE = new RegExp('(' + TEMPLATE_PHRASES.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+
+/* 1文をHTMLへ：テンプレ定型表現は通常色、それ以外（生成された内容）は .free で色を変える */
+function renderSentence(s) {
+  return String(s).split(TPL_RE).map((seg, i) =>
+    i % 2 ? esc(seg) : (seg ? `<span class="free">${esc(seg)}</span>` : '')
+  ).join('');
+}
+
 function readJSON(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
 }
@@ -426,7 +436,7 @@ function viewStudy() {
     const role = BODY_ROLES[bi] || BODY_ROLES[0];
     const sentences = Array.isArray(body.sentences) ? body.sentences : [];
     const linesHtml = sentences.map((s, si) =>
-      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${esc(s)}</p>`
+      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${renderSentence(s)}</p>`
     ).join('');
     const wc = bodyText(body).split(/\s+/).filter(Boolean).length;
     const jaShown = state.showJa[bi];
@@ -456,7 +466,7 @@ function viewStudy() {
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
     </div>
-    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能です。論点だしトレーニングで作った論点を Body に反映することもできます。</p>
+    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。</p>
     ${compareCard(set)}
     ${evalSection(set)}
     ${bodiesHtml}`;
@@ -607,7 +617,7 @@ function modalBodyRewrite() {
   if (!set) return '';
   let inner;
   if (br.result) {
-    inner = `<p class="study-line">${esc(bodyText(br.result))}</p>
+    inner = `<p class="study-line">${br.result.sentences.map(renderSentence).join(' ')}</p>
       <p class="ja-text">${esc(br.result.ja)}</p>
       <div class="row">
         <button class="btn small" data-action="apply-rewrite-body">この内容で Body ${br.bodyIdx + 1} を置き換える</button>
