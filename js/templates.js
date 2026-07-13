@@ -1,54 +1,20 @@
-/* Body テンプレート定義
-   各テンプレートは「固定テキスト」と「スロット（ワイルドカード）」の列で構成される。
-   スロット値を流し込むと完成文になる。 */
+/* Body 役割定義
+   各 Body は「役割の異なる4文」で構成される（新テンプレート）。
+   - Body 1: 因果必然型 … 論理で「必ずそうなる」と示す
+   - Body 2: 実証型     … 事実・例証で「現に起きている」と示す
+   - Body 3: 譲歩反駁型 … 想定反論を潰して「反論しても崩れない」と示す
+   各文には固定の機能（主張／メカニズム…）があり、学習画面でラベル表示する。 */
 
-const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'keyConcept', 'conclusion'];
-
-const SLOT_LABELS = {
-  reason: '観点',
-  principle: '原理',
-  condition: '条件',
-  result: '結果',
-  keyConcept: 'キー概念',
-  conclusion: '結論',
-};
-
-function T(text) { return { text }; }
-function S(slot) { return { slot }; }
-
-const TEMPLATES = [
-  {
-    name: 'Body 1',
-    lines: [
-      [T('First and foremost, '), S('reason'), T(' is a crucial factor.')],
-      [T('This is because '), S('principle'), T('.')],
-      [T('In essence, when '), S('condition'), T(', it leads to '), S('result'), T('.')],
-      [T('Therefore, '), S('keyConcept'), T(' plays a key role in '), S('conclusion'), T('.')],
-    ],
-  },
-  {
-    name: 'Body 2',
-    lines: [
-      [T('Another key point is '), S('reason'), T('.')],
-      [T('This is largely because '), S('principle'), T('.')],
-      [T('Put simply, whenever '), S('condition'), T(', it results in '), S('result'), T('.')],
-      [T('Hence, '), S('keyConcept'), T(' is essential for '), S('conclusion'), T('.')],
-    ],
-  },
-  {
-    name: 'Body 3',
-    lines: [
-      [T('A further point is '), S('reason'), T('.')],
-      [T('The primary reason is that '), S('principle'), T('.')],
-      [T('In other words, if '), S('condition'), T(', this leads to '), S('result'), T('.')],
-      [T('Accordingly, '), S('keyConcept'), T(' is vital for '), S('conclusion'), T('.')],
-    ],
-  },
+const BODY_ROLES = [
+  { name: 'Body 1', type: '因果必然型', functions: ['主張', 'メカニズム', '深刻化・拡大', '利害への着地'] },
+  { name: 'Body 2', type: '実証型', functions: ['主張', '一般論の説明', '証拠', '含意'] },
+  { name: 'Body 3', type: '譲歩反駁型', functions: ['主張', '譲歩', '反駁', '決着'] },
 ];
 
-/* テンプレートとスロット値から完成文（プレーンテキスト）を組み立てる */
-function assembleBody(tplIndex, slots) {
-  return TEMPLATES[tplIndex].lines
-    .map(line => line.map(p => p.text !== undefined ? p.text : (slots[p.slot] || '')).join(''))
+/* body.sentences（文の配列）を1つの段落テキストに連結する */
+function bodyText(body) {
+  return (body && Array.isArray(body.sentences) ? body.sentences : [])
+    .map(s => String(s || '').trim())
+    .filter(Boolean)
     .join(' ');
 }

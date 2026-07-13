@@ -162,6 +162,11 @@ section { margin-bottom: 8px; }
 .body-card { margin-bottom: 14px; }
 .body-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
 .study-line { margin-bottom: 6px; font-size: 0.95rem; }
+.fn-tag {
+  display: inline-block; min-width: 5.2em; margin-right: 8px;
+  font-size: 0.68rem; color: var(--accent); background: var(--accent-soft);
+  border-radius: 6px; padding: 1px 6px; text-align: center; vertical-align: 1px;
+}
 .stat { color: var(--sub); font-size: 0.8rem; }
 .ja-text {
   background: var(--bg); border-radius: 8px; padding: 10px 12px;

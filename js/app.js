@@ -6,7 +6,7 @@ const LS = {
   progress: 'et.progress',
   themes: 'et.customThemes',
   hiddenThemes: 'et.hiddenThemes', // 非表示にしたプリセットテーマの topic 一覧
-  seeded: 'et.seeded.v4', // サンプル内容を更新したらバージョンを上げて再シードする
+  seeded: 'et.seeded.v5', // サンプル内容を更新したらバージョンを上げて再シードする
   dirty: 'et.cloudDirty', // クラウド未送信の変更がある印
   theme: 'et.theme', // auto | light | dark
 };
@@ -20,7 +20,7 @@ function applyTheme() {
 }
 
 let state = {
-  view: 'home',        // home | brainstorm | study | exercise | loading
+  view: 'home',        // home | brainstorm | study | loading
   modal: null,         // settings | stance | keyword | null
   keywordError: null,
   busyKeyword: false,
@@ -29,13 +29,11 @@ let state = {
   bsMode: 'generate', // generate（新規生成前）| practice（既存エッセイへの反復練習）
   bsSetId: null,
   bsTimerId: null,
-  slotEdit: null,      // {setId, bodyIdx, slotKey, from, text, result, error, busy}
   themeAddError: null,
   themeDraft: { en: '', ja: '', cat: null },
   loadingText: '',
   setId: null,
   showJa: {},
-  ex: null,
   error: null,
   notice: null,
   busyThemes: false,
@@ -53,14 +51,6 @@ const $app = document.getElementById('app');
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
 }
 
 function readJSON(key, fallback) {
@@ -142,7 +132,7 @@ async function cloudFlush(opts) {
 
 /* クラウドのデータをローカルに反映（dirty を立てないよう直接書き込む） */
 function applyCloudData(d) {
-  if (Array.isArray(d.sets)) localStorage.setItem(LS.sets, JSON.stringify(d.sets));
+  if (Array.isArray(d.sets)) localStorage.setItem(LS.sets, JSON.stringify(migrateSets(d.sets)));
   if (d.progress && typeof d.progress === 'object') localStorage.setItem(LS.progress, JSON.stringify(d.progress));
   if (Array.isArray(d.customThemes)) localStorage.setItem(LS.themes, JSON.stringify(d.customThemes));
   if (Array.isArray(d.hiddenThemes)) localStorage.setItem(LS.hiddenThemes, JSON.stringify(d.hiddenThemes));
@@ -206,7 +196,38 @@ function visibleThemes() {
   return PRESET_THEMES.filter(t => !hidden.includes(t.topic)).concat(getCustomThemes());
 }
 
+/* 旧スロット形式（reason/principle/…）で保存された Body を、新しい4文形式へ変換するための
+   固定テンプレート。生成済みの旧エッセイを読めるまま移行するためだけに使う。 */
+const LEGACY_TEMPLATES = [
+  ['First and foremost, {reason} is a crucial factor.', 'This is because {principle}.', 'In essence, when {condition}, it leads to {result}.', 'Therefore, {keyConcept} plays a key role in {conclusion}.'],
+  ['Another key point is {reason}.', 'This is largely because {principle}.', 'Put simply, whenever {condition}, it results in {result}.', 'Hence, {keyConcept} is essential for {conclusion}.'],
+  ['A further point is {reason}.', 'The primary reason is that {principle}.', 'In other words, if {condition}, this leads to {result}.', 'Accordingly, {keyConcept} is vital for {conclusion}.'],
+];
+
+/* 1つの Body を新形式（argument / sentences / ja）に正規化する。既に新形式ならそのまま返す。 */
+function migrateBody(body, bodyIdx) {
+  if (!body || typeof body !== 'object') return body;
+  if (Array.isArray(body.sentences)) return body; // 既に新形式
+  if (body.slots) {
+    const tpl = LEGACY_TEMPLATES[bodyIdx] || LEGACY_TEMPLATES[0];
+    const sentences = tpl.map(t => t.replace(/\{(\w+)\}/g, (m, k) => String(body.slots[k] || '').trim()));
+    return { argument: String(body.slots.reason || '').trim(), sentences, ja: body.ja || '' };
+  }
+  return { argument: body.argument || '', sentences: [], ja: body.ja || '' };
+}
+
+/* sets 配列内の全 Body を新形式へ変換した新しい配列を返す（変換不要ならそのまま） */
+function migrateSets(sets) {
+  if (!Array.isArray(sets)) return sets;
+  return sets.map(s => {
+    if (!s || !Array.isArray(s.bodies) || !s.bodies.some(b => b && !Array.isArray(b.sentences))) return s;
+    return Object.assign({}, s, { bodies: s.bodies.map((b, i) => migrateBody(b, i)) });
+  });
+}
+
 function seedPresets() {
+  const legacy = migrateSets(getSets());
+  localStorage.setItem(LS.sets, JSON.stringify(legacy)); // 旧形式の生成済みエッセイを移行
   if (localStorage.getItem(LS.seeded)) return;
   // 旧バージョンのサンプルは新しい内容に置き換える（生成済みエッセイは残す）
   // 注意：dirty を立てない（新端末でクラウドデータをシードで上書きしないため）
@@ -224,12 +245,10 @@ function render() {
   if (state.view === 'home') html = viewHome();
   else if (state.view === 'brainstorm') html = viewBrainstorm();
   else if (state.view === 'study') html = viewStudy();
-  else if (state.view === 'exercise') html = viewExercise();
   else if (state.view === 'loading') html = viewLoading();
   if (state.modal === 'settings') html += modalSettings();
   if (state.modal === 'stance') html += modalStance();
   if (state.modal === 'keyword') html += modalKeyword();
-  if (state.modal === 'slotEdit') html += modalSlotEdit();
   if (state.modal === 'themeAdd') html += modalThemeAdd();
   if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
   if (state.modal === 'chat') html += modalChat();
@@ -253,22 +272,19 @@ function stanceBadge(stance) {
 
 function viewHome() {
   const sets = getSets();
-  const progress = getProgress();
 
   const setItems = sets.map(s => {
-    const p = progress[s.id] || {};
-    const badges = [0, 1, 2].map(i => {
-      const bp = p[i];
-      const cls = bp ? (bp.best >= 90 ? 'done' : 'part') : '';
-      return `<span class="body-dot ${cls}" title="Body ${i + 1}${bp ? ` 正答率 ${bp.best}%` : ' 未実施'}">${i + 1}</span>`;
-    }).join('');
+    const ev = s.evaluation;
+    const scoreBadge = ev && typeof ev.average === 'number'
+      ? `<span class="eval-avg ${ev.average >= 8 ? 'pass' : 'warn'}" title="Gemini 採点の平均">平均 ${ev.average}</span>`
+      : '<span class="cloud-badge">未採点</span>';
     return `<div class="card set-card">
       <div class="set-info" data-action="open-set" data-id="${esc(s.id)}">
         <div class="set-topic">${esc(s.topic)}</div>
         <div class="set-sub">${esc(s.topicJa || '')} ${stanceBadge(s.stance)} ${s.source === 'gemini' ? '<span class="badge src">Gemini</span>' : '<span class="badge src">サンプル</span>'}</div>
       </div>
       <div class="set-side">
-        <div class="body-dots">${badges}</div>
+        ${scoreBadge}
         <button class="btn small ghost" data-action="delete-set" data-id="${esc(s.id)}">削除</button>
       </div>
     </div>`;
@@ -405,30 +421,25 @@ function collectBrainstormPoints() {
 function viewStudy() {
   const set = findSet(state.setId);
   if (!set) { state.view = 'home'; return viewHome(); }
-  const progress = getProgress()[set.id] || {};
 
   const bodiesHtml = set.bodies.map((body, bi) => {
-    const tpl = TEMPLATES[bi];
-    const edited = body.originalSlots || {};
-    const linesHtml = tpl.lines.map(line =>
-      `<p class="study-line">${line.map(p =>
-        p.text !== undefined
-          ? esc(p.text)
-          : `<span class="slot done${p.slot in edited ? ' edited' : ''}" data-action="edit-slot" data-from="study" data-id="${esc(set.id)}" data-body="${bi}" data-slot="${p.slot}" title="${SLOT_LABELS[p.slot]}（タップで自分の表現に編集）">${esc(body.slots[p.slot])}</span>`
-      ).join('')}</p>`
+    const role = BODY_ROLES[bi] || BODY_ROLES[0];
+    const sentences = Array.isArray(body.sentences) ? body.sentences : [];
+    const linesHtml = sentences.map((s, si) =>
+      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${esc(s)}</p>`
     ).join('');
-    const bp = progress[bi];
-    const wc = assembleBody(bi, body.slots).split(/\s+/).filter(Boolean).length;
-    const stat = `<span class="stat">${wc} 語 ・ ${bp ? `実施 ${bp.count} 回 / ベスト ${bp.best}%` : '未実施'}</span>`;
+    const wc = bodyText(body).split(/\s+/).filter(Boolean).length;
     const jaShown = state.showJa[bi];
     return `<div class="card body-card">
-      <div class="body-head"><h3>${tpl.name}${Object.keys(edited).length ? ' <span class="badge src">✍️ 自分の表現</span>' : ''}</h3>${stat}</div>
+      <div class="body-head">
+        <h3>${role.name} <span class="badge src">${esc(role.type)}</span>${body.original ? ' <span class="badge src">✍️ 書き換え済み</span>' : ''}</h3>
+        <span class="stat">${wc} 語</span>
+      </div>
       ${linesHtml}
       ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
       <div class="row">
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
-        ${Object.keys(edited).length ? `<button class="btn small ghost" data-action="undo-slots" data-body="${bi}">元の模範解答に戻す</button>` : ''}
-        <button class="btn small" data-action="start-ex" data-id="${esc(set.id)}" data-body="${bi}">▶ この Body を練習</button>
+        ${body.original ? `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -445,7 +456,7 @@ function viewStudy() {
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
     </div>
-    <p class="hint-text">色付きのスロットをタップすると、自分の表現に書き換えられます（Gemini が判定・添削します）。</p>
+    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能です。論点だしトレーニングで作った論点を Body に反映することもできます。</p>
     ${compareCard(set)}
     ${evalSection(set)}
     ${bodiesHtml}`;
@@ -471,7 +482,7 @@ function compareCard(set) {
       ${r && r.comment ? `<div class="verdict-comment">${esc(r.comment)}</div>` : ''}
       ${canReflect ? `<button class="btn small ghost" data-action="open-rewrite-body" data-set="${esc(set.id)}" data-point="${esc(pt)}">→ Bodyに反映</button>` : ''}</li>`;
   }).join('');
-  const gemini = set.bodies.map(b => `<li>${esc(b.slots.reason)}</li>`).join('');
+  const gemini = set.bodies.map(b => `<li>${esc(b.argument || '')}</li>`).join('');
   return `<div class="card compare-card">
     <h3>🧠 論点の答え合わせ</h3>
     <div class="compare-cols">
@@ -512,80 +523,6 @@ function evalCard(set) {
     </ul>
     ${!pass ? '<p class="hint-text">スコアが低いため、再生成をおすすめします。</p>' : ''}
   </div>`;
-}
-
-/* ---------- exercise view ---------- */
-
-function viewExercise() {
-  const ex = state.ex;
-  const set = findSet(ex.setId);
-  const tpl = TEMPLATES[ex.bodyIdx];
-  const totalSlots = ex.slots.length;
-
-  let slotIdx = 0;
-  const bodyHtml = tpl.lines.map((line, li) => {
-    const html = line.map(p => {
-      if (p.text !== undefined) return esc(p.text);
-      const gi = slotIdx++;
-      const slot = ex.slots[gi];
-      if (ex.done || gi < ex.slotPos) {
-        return `<span class="slot done">${esc(slot.words.join(' '))}</span>`;
-      }
-      if (gi === ex.slotPos) {
-        const placed = slot.words.slice(0, ex.wordPos).join(' ');
-        const blanks = slot.words.slice(ex.wordPos).map(() => '<span class="blank">___</span>').join(' ');
-        return `<span class="slot current">${esc(placed)}${placed ? ' ' : ''}${blanks}</span>`;
-      }
-      return `<span class="slot pending">[${SLOT_LABELS[p.slot]}]</span>`;
-    }).join('');
-    const active = !ex.done && ex.slots[ex.slotPos] && ex.slots[ex.slotPos].line === li;
-    return `<p class="ex-line${active ? ' active' : ''}">${html}</p>`;
-  }).join('');
-
-  let bottom;
-  if (ex.done) {
-    const total = ex.slots.reduce((n, s) => n + s.words.length, 0);
-    const acc = Math.max(0, Math.round(100 * total / (total + ex.mistakes + ex.hints)));
-    const body = set.bodies[ex.bodyIdx];
-    const hasNext = ex.bodyIdx < 2;
-    bottom = `<div class="card result-card">
-      <h3>🎉 ${tpl.name} 完成！</h3>
-      <p class="stat">正答率 <strong>${acc}%</strong>（ミス ${ex.mistakes} / ヒント ${ex.hints}）</p>
-      ${body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
-      <div class="row">
-        <button class="btn small ghost" data-action="ex-retry">もう一度</button>
-        ${hasNext ? `<button class="btn small" data-action="ex-next-body">次の Body へ ▶</button>` : ''}
-        <button class="btn small ghost" data-action="ex-quit">学習画面へ</button>
-      </div>
-    </div>`;
-  } else {
-    const curSlot = ex.slots[ex.slotPos];
-    const chips = ex.chips.map((w, i) =>
-      `<button class="chip${state.wrongChip === i ? ' wrong' : ''}" data-action="chip" data-idx="${i}">${esc(w)}</button>`
-    ).join('');
-    bottom = `<div class="chip-panel">
-      <div class="chip-head">
-        <span class="slot-label">空欄：<strong>${SLOT_LABELS[curSlot.key]}</strong>（${curSlot.words.length - ex.wordPos} 語）</span>
-        <span class="stat">ミス ${ex.mistakes}</span>
-      </div>
-      <div class="chips">${chips}</div>
-      <div class="row">
-        <button class="btn small ghost" data-action="hint">💡 ヒント（1語）</button>
-        <button class="btn small ghost" data-action="edit-slot" data-from="exercise">✍️ 自分の言葉で</button>
-        <button class="btn small ghost" data-action="ex-quit">中断</button>
-      </div>
-    </div>`;
-  }
-
-  const pct = Math.round(100 * (ex.done ? totalSlots : ex.slotPos) / totalSlots);
-  return `<header class="topbar">
-      <button class="btn ghost" data-action="ex-quit">← 戻る</button>
-      <span class="topbar-title">${tpl.name}</span>
-    </header>
-    <div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>
-    <p class="topic-line">${esc(set.topic)} ${stanceBadge(set.stance)}</p>
-    <div class="card ex-body">${bodyHtml}</div>
-    ${bottom}`;
 }
 
 function viewLoading() {
@@ -662,110 +599,6 @@ function modalStance() {
   </div>`;
 }
 
-function modalSlotEdit() {
-  const se = state.slotEdit;
-  const set = findSet(se.setId);
-  if (!set) return '';
-  const body = set.bodies[se.bodyIdx];
-  const line = TEMPLATES[se.bodyIdx].lines.find(l => l.some(p => p.slot === se.slotKey));
-  const lineHtml = (fill) => line.map(p =>
-    p.text !== undefined ? esc(p.text)
-      : p.slot === se.slotKey ? `<span class="slot current">${fill}</span>`
-      : `<span class="slot done">${esc(body.slots[p.slot])}</span>`).join('');
-  const r = se.result;
-  let bottom;
-  if (r) {
-    const badge = r.verdict === 'ok' ? '<span class="verdict valid">✅ 問題なし</span>'
-      : r.verdict === 'rework' ? '<span class="verdict invalid">✖ 不適合（修正版を提示）</span>'
-      : '<span class="verdict weak">△ 修正あり</span>';
-    bottom = `<div class="review-result">
-      <div class="body-head">${badge}<span class="stat">添削後</span></div>
-      <p class="study-line">${lineHtml(esc(r.corrected))}</p>
-      ${r.explanation ? `<p class="verdict-comment">${esc(r.explanation)}</p>` : ''}
-      <div class="row">
-        <button class="btn small" data-action="slot-apply">この表現で模範解答を置き換える</button>
-        <button class="btn small ghost" data-action="slot-rewrite">書き直す</button>
-        <button class="btn small ghost" data-action="close-modal">置き換えない</button>
-      </div>
-    </div>`;
-  } else {
-    bottom = `<div class="row">
-      <button class="btn" data-action="slot-review" ${se.busy ? 'disabled' : ''}>${se.busy ? 'Gemini が判定中…' : '判定する'}</button>
-      <button class="btn ghost" data-action="close-modal">キャンセル</button>
-    </div>`;
-  }
-  return `<div class="overlay" data-action="close-modal">
-    <div class="modal" data-stop>
-      <h3>✍️ 「${SLOT_LABELS[se.slotKey]}」を自分の言葉で</h3>
-      <p class="study-line slot-edit-context">${lineHtml('＿＿＿')}</p>
-      <input type="text" id="slotEditInput" value="${esc(se.text)}" placeholder="この空欄に入る英語（日本語混じりでも可）" ${r ? 'disabled' : ''}>
-      ${se.error ? `<p class="field-error">${esc(se.error)}</p>` : ''}
-      ${bottom}
-    </div>
-  </div>`;
-}
-
-async function doReviewSlot() {
-  const se = state.slotEdit;
-  if (!se || se.busy) return;
-  const input = document.getElementById('slotEditInput');
-  if (input) se.text = input.value.trim();
-  if (!se.text) { se.error = '英文を入力してください'; render(); return; }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '判定には合言葉の入力が必要です';
-    render();
-    return;
-  }
-  se.busy = true;
-  se.error = null;
-  render();
-  try {
-    se.result = await reviewSlot(findSet(se.setId), se.bodyIdx, se.slotKey, se.text);
-  } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-      state.slotEdit = null;
-    } else {
-      se.error = e.message;
-    }
-  }
-  if (state.slotEdit) state.slotEdit.busy = false;
-  render();
-}
-
-function applySlotReplacement() {
-  const se = state.slotEdit;
-  if (!se || !se.result) return;
-  const sets = getSets();
-  const set = sets.find(s => s.id === se.setId);
-  if (!set) return;
-  const body = set.bodies[se.bodyIdx];
-  body.originalSlots = body.originalSlots || {};
-  if (!(se.slotKey in body.originalSlots)) body.originalSlots[se.slotKey] = body.slots[se.slotKey];
-  if (body.originalJa === undefined) body.originalJa = body.ja || '';
-  body.slots[se.slotKey] = se.result.corrected;
-  if (se.result.ja) body.ja = se.result.ja;
-  set.evaluation = null; // 内容が変わったため採点をやり直す
-  saveSetsList(sets);
-  // 練習中に置き換えた場合は、その空欄を新しい表現で練習し直す
-  const ex = state.ex;
-  if (se.from === 'exercise' && ex && !ex.done && ex.setId === se.setId && ex.bodyIdx === se.bodyIdx) {
-    const slot = ex.slots[ex.slotPos];
-    if (slot.key === se.slotKey) {
-      slot.words = se.result.corrected.split(/\s+/);
-      ex.wordPos = 0;
-      ex.chips = shuffle(slot.words.slice());
-    }
-  }
-  state.modal = null;
-  state.slotEdit = null;
-  state.notice = '模範解答をあなたの表現に置き換えました';
-  render();
-}
-
 /* ---------- 論点をBodyに反映（丸ごと書き直し） ---------- */
 
 function modalBodyRewrite() {
@@ -774,7 +607,7 @@ function modalBodyRewrite() {
   if (!set) return '';
   let inner;
   if (br.result) {
-    inner = `<p class="study-line">${esc(assembleBody(br.bodyIdx, br.result.slots))}</p>
+    inner = `<p class="study-line">${esc(bodyText(br.result))}</p>
       <p class="ja-text">${esc(br.result.ja)}</p>
       <div class="row">
         <button class="btn small" data-action="apply-rewrite-body">この内容で Body ${br.bodyIdx + 1} を置き換える</button>
@@ -844,9 +677,10 @@ function applyBodyRewrite() {
   const set = sets.find(s => s.id === br.setId);
   if (!set) return;
   const body = set.bodies[br.bodyIdx];
-  body.originalSlots = Object.assign({}, body.slots); // 書き換え前の全スロットをスナップショット
-  body.originalJa = body.ja || '';
-  body.slots = br.result.slots;
+  // 書き換え前の Body 全体をスナップショット（元に戻す用）。二重書き換えでも初回の元文を保持する。
+  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '' };
+  body.argument = br.result.argument;
+  body.sentences = br.result.sentences;
   body.ja = br.result.ja;
   set.evaluation = null; // 内容が変わったため採点をやり直す
   saveSetsList(sets);
@@ -997,92 +831,6 @@ function deleteTheme(idx) {
     saveHiddenThemes(hidden);
   }
   render();
-}
-
-/* ---------- exercise logic ---------- */
-
-function startExercise(setId, bodyIdx) {
-  const set = findSet(setId);
-  if (!set) return;
-  const tpl = TEMPLATES[bodyIdx];
-  const slots = [];
-  tpl.lines.forEach((line, li) => {
-    line.forEach(p => {
-      if (p.slot) {
-        const value = String(set.bodies[bodyIdx].slots[p.slot] || '').trim();
-        slots.push({ key: p.slot, line: li, words: value.split(/\s+/) });
-      }
-    });
-  });
-  state.ex = {
-    setId, bodyIdx, slots,
-    slotPos: 0, wordPos: 0,
-    chips: shuffle(slots[0].words.slice()),
-    mistakes: 0, hints: 0, done: false,
-  };
-  state.wrongChip = null;
-  state.view = 'exercise';
-  render();
-}
-
-function advanceExercise() {
-  const ex = state.ex;
-  const slot = ex.slots[ex.slotPos];
-  if (ex.wordPos >= slot.words.length) {
-    ex.slotPos++;
-    ex.wordPos = 0;
-    if (ex.slotPos >= ex.slots.length) {
-      ex.done = true;
-      recordProgress(ex);
-    } else {
-      ex.chips = shuffle(ex.slots[ex.slotPos].words.slice());
-    }
-  }
-  render();
-}
-
-function tapChip(i) {
-  const ex = state.ex;
-  if (!ex || ex.done) return;
-  const slot = ex.slots[ex.slotPos];
-  const target = slot.words[ex.wordPos];
-  if (ex.chips[i] === target) {
-    ex.chips.splice(i, 1);
-    ex.wordPos++;
-    state.wrongChip = null;
-    advanceExercise();
-  } else {
-    ex.mistakes++;
-    state.wrongChip = i;
-    render();
-    setTimeout(() => {
-      if (state.wrongChip === i) { state.wrongChip = null; render(); }
-    }, 400);
-  }
-}
-
-function useHint() {
-  const ex = state.ex;
-  if (!ex || ex.done) return;
-  const slot = ex.slots[ex.slotPos];
-  const target = slot.words[ex.wordPos];
-  const idx = ex.chips.indexOf(target);
-  if (idx >= 0) {
-    ex.chips.splice(idx, 1);
-    ex.wordPos++;
-    ex.hints++;
-    advanceExercise();
-  }
-}
-
-function recordProgress(ex) {
-  const total = ex.slots.reduce((n, s) => n + s.words.length, 0);
-  const acc = Math.max(0, Math.round(100 * total / (total + ex.mistakes + ex.hints)));
-  const progress = getProgress();
-  const p = progress[ex.setId] || (progress[ex.setId] = {});
-  const prev = p[ex.bodyIdx] || { count: 0, best: 0 };
-  p[ex.bodyIdx] = { count: prev.count + 1, best: Math.max(prev.best, acc), last: acc };
-  saveProgress(progress);
 }
 
 /* ---------- generation flows ---------- */
@@ -1314,42 +1062,20 @@ $app.addEventListener('click', (ev) => {
 
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
   else if (a === 'close-modal') {
-    state.modal = null; state.keywordError = null; state.slotEdit = null;
+    state.modal = null; state.keywordError = null;
     state.bodyRewrite = null; state.chatError = null;
     render();
   }
-  else if (a === 'edit-slot') {
-    let setId, bodyIdx, slotKey;
-    if (el.dataset.from === 'exercise') {
-      const ex = state.ex;
-      if (!ex || ex.done) return;
-      setId = ex.setId; bodyIdx = ex.bodyIdx; slotKey = ex.slots[ex.slotPos].key;
-    } else {
-      setId = el.dataset.id; bodyIdx = Number(el.dataset.body); slotKey = el.dataset.slot;
-    }
-    const set = findSet(setId);
-    if (!set) return;
-    state.slotEdit = {
-      setId, bodyIdx, slotKey,
-      from: el.dataset.from,
-      text: el.dataset.from === 'study' ? set.bodies[bodyIdx].slots[slotKey] : '',
-      result: null, error: null, busy: false,
-    };
-    state.modal = 'slotEdit';
-    render();
-  }
-  else if (a === 'slot-review') { doReviewSlot(); }
-  else if (a === 'slot-rewrite') { if (state.slotEdit) { state.slotEdit.result = null; render(); } }
-  else if (a === 'slot-apply') { applySlotReplacement(); }
-  else if (a === 'undo-slots') {
+  else if (a === 'undo-body') {
     const bi = Number(el.dataset.body);
     const sets = getSets();
     const set = sets.find(s => s.id === state.setId);
     const body = set && set.bodies[bi];
-    if (body && body.originalSlots && confirm('この Body のスロットをすべて元の模範解答に戻しますか？')) {
-      for (const k of Object.keys(body.originalSlots)) body.slots[k] = body.originalSlots[k];
-      delete body.originalSlots;
-      if (body.originalJa !== undefined) { body.ja = body.originalJa; delete body.originalJa; }
+    if (body && body.original && confirm('この Body を元の模範解答に戻しますか？')) {
+      body.argument = body.original.argument;
+      body.sentences = body.original.sentences;
+      body.ja = body.original.ja;
+      delete body.original;
       set.evaluation = null; // 内容が変わったため採点をやり直す
       saveSetsList(sets);
       state.notice = '元の模範解答に戻しました';
@@ -1421,9 +1147,6 @@ $app.addEventListener('click', (ev) => {
     const set = findSet(el.dataset.id);
     if (set && confirm(`「${set.topic}」を削除しますか？`)) {
       saveSetsList(getSets().filter(s => s.id !== el.dataset.id));
-      const progress = getProgress();
-      delete progress[el.dataset.id];
-      saveProgress(progress);
       render();
     }
   }
@@ -1433,17 +1156,6 @@ $app.addEventListener('click', (ev) => {
     state.showJa[bi] = !state.showJa[bi];
     render();
   }
-  else if (a === 'start-ex') { startExercise(el.dataset.id, Number(el.dataset.body)); }
-  else if (a === 'chip') { tapChip(Number(el.dataset.idx)); }
-  else if (a === 'hint') { useHint(); }
-  else if (a === 'ex-quit') {
-    state.setId = state.ex ? state.ex.setId : state.setId;
-    state.ex = null;
-    state.view = 'study';
-    render();
-  }
-  else if (a === 'ex-retry') { startExercise(state.ex.setId, state.ex.bodyIdx); }
-  else if (a === 'ex-next-body') { startExercise(state.ex.setId, state.ex.bodyIdx + 1); }
   else if (a === 'export-data') { exportData(); }
   else if (a === 'import-data') { document.getElementById('importFile').click(); }
   else if (a === 'set-theme') {
@@ -1495,9 +1207,6 @@ $app.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.id === 'inpKeyword') {
     doSaveKeyword(state.modal === 'settings' ? 'settings' : 'welcome');
   }
-  if (ev.key === 'Enter' && ev.target.id === 'slotEditInput') {
-    doReviewSlot();
-  }
   if (ev.key === 'Enter' && ev.target.id === 'chatInput') {
     doChatSend();
   }
@@ -1505,7 +1214,6 @@ $app.addEventListener('keydown', (ev) => {
 
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
 $app.addEventListener('input', (ev) => {
-  if (ev.target.id === 'slotEditInput' && state.slotEdit) state.slotEdit.text = ev.target.value;
   if (ev.target.id === 'chatInput') state.chatDraft = ev.target.value;
 });
 

@@ -10,24 +10,35 @@ const crypto = require('crypto');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
-/* 各Bodyの固定語数と、45〜50語に収めるためのスロット合計語数の目安 */
-const BODY_WORD_BUDGET = [
-  { fixed: 22, slotMin: 23, slotMax: 28 },
-  { fixed: 18, slotMin: 27, slotMax: 32 },
-  { fixed: 20, slotMin: 25, slotMax: 30 },
-];
+/* 各 Body の役割・語数の目安（新テンプレート：役割の異なる4文で1段落 45〜60語） */
+const BODY_ROLE_NAMES = ['因果必然型', '実証型', '譲歩反駁型'];
 
-/* Body生成・書き直し共通のスロット文法・内容制約（観点の中立・構造・抽象化の3原則を含む） */
-const SLOT_CONSTRAINTS = `- reason: a substantial noun phrase of 5–8 words with meaningful modifiers, describing WHAT structurally changes — three principles, in order of importance:
-  1. NEUTRAL: never bake in a value judgment about whether the change is good or bad (avoid words like "decline", "undermined", "dangerous", "harmed"; describe the change itself — e.g. "the reshaping of the labor force" NOT "the labor force is harmed")
-  2. STRUCTURAL: name the structure/system that changes, not who benefits or loses — e.g. educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation
-  3. ABSTRACT: one level more abstract than the concrete phenomenon in the topic — e.g. "students using AI for homework" → "the learning process being altered"; "more women entering the workforce" → "the labor force being reshaped"
-  (e.g. "the large-scale reshaping of the labor force by AI")
-- principle: a full clause of 8–13 words with subject and verb that explains the underlying MECHANISM — WHY this structural change happens, not just a restatement (follows "because" / "reason is that")
-- condition: a clause of 5–7 words with subject and verb, NO leading conjunction (follows "when" / "whenever" / "if")
-- result: a specific noun phrase of 4–7 words naming the downstream SOCIAL consequence — the "so what?", not merely the first-order effect (e.g. not just "critical thinking declines" but "a reduced ability to adapt to new challenges") (follows "leads to" / "results in")
-- keyConcept: a short noun phrase of 2–4 words
-- conclusion: a gerund phrase or noun phrase of 4–6 words (follows "in" / "for")`;
+/* 論点（argument）の3原則。生成・書き換え・論点判定で共有する。 */
+const ARGUMENT_PRINCIPLES = `A strong argument follows three principles:
+1. NEUTRAL: it describes WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")
+2. STRUCTURAL: it names a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"
+3. ABSTRACT: it is one level more abstract than a narrow concrete anecdote (e.g. "AI does my homework" → "the learning process is altered")`;
+
+/* 3つの Body に与える「4文アーキテクチャ」。1文=1機能で役割を固定する。 */
+const BODY_ARCHITECTURE = `Each body paragraph MUST consist of EXACTLY FOUR sentences, each performing a fixed function. The three bodies use DIFFERENT rhetorical modes so the essay never feels repetitive. Every sentence is a complete sentence: it starts with a capital letter and ends with a period.
+
+BODY 1 — Causal-necessity mode (論理: "it must logically follow"):
+  Sentence 1 (Claim): "First of all, [the argument] inevitably leads to [a consequence]."
+  Sentence 2 (Mechanism): explain WHY it happens — "As [one change occurs], [a linked change] also grows / weakens."
+  Sentence 3 (Escalation): push to a graver stage — "Sooner or later, [a worse consequence follows]." (or "In fact, [real-world backing].")
+  Sentence 4 (Stakes): land on who is affected — "This burden on [group] will become intolerable." (or "This will greatly benefit [group].")
+
+BODY 2 — Empirical mode (実証: "it is actually happening"):
+  Sentence 1 (Claim): "Secondly, [claim]."
+  Sentence 2 (General explanation): "This is because ..." / "[subject] are becoming able to ..."
+  Sentence 3 (Evidence): "In fact, [something really occurring]." / "For example, [a concrete case]." / "..., such as [a real broad example like China, India, or developing countries]." Use a real but broad example — do NOT invent statistics or fake proper nouns.
+  Sentence 4 (Implication): "This means that [a society-level consequence]."
+
+BODY 3 — Concession-rebuttal mode (防御: "even the counterargument fails"):
+  Sentence 1 (Claim): "Finally, [claim]."
+  Sentence 2 (Concession): "It is true that [a plausible counterargument]." / "While some may argue that [counterargument],"
+  Sentence 3 (Rebuttal): "However, this is not the case, because [why the counterargument fails]." / "However, [the limit of that counterargument]."
+  Sentence 4 (Resolution): "Therefore, [why your side prevails]." / "For this reason, [your argument wins]."`;
 
 function buildEssayPrompt(topic, stance, userPoints) {
   const stanceText = stance === 'agree'
@@ -40,14 +51,10 @@ USER'S BRAINSTORMED ARGUMENTS (the learner wrote these in 90 seconds BEFORE seei
 ${points.map((p, i) => `${i + 1}. ${p}`).join('\n')}
 
 Tasks for these arguments:
-- Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check:
-  - Direction: does it point toward the stance?
-  - Neutrality: is it phrased as a neutral description of WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")?
-  - Structural framing: does it name a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"?
-  - Abstraction level: is it one level more abstract than a narrow concrete anecdote?
+- Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check direction (does it point toward the stance?), and the three argument principles above (neutral / structural / abstract).
 - Report the judgments in a "pointsReview" array (one object per argument, same order). Each comment must be IN JAPANESE, short, and say why it works or how to fix it (mention neutrality/structure/abstraction if that's the issue).
-- If an argument is valid and strong, ADOPT it as one of your three body arguments — rephrase it to satisfy the reason-slot principles below (neutral, structural, abstracted) so the learner sees their own idea turned into a proper English argument.` : '';
-  const bodiesShape = '{"bodies":[{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","keyConcept":"...","conclusion":"..."},"ja":"..."},{...},{...}]';
+- If an argument is valid and strong, ADOPT it as one of your three body arguments — rephrase it to satisfy the three principles so the learner sees their own idea turned into a proper English argument.` : '';
+  const bodiesShape = '{"bodies":[{"argument":"...","sentences":["...","...","...","..."],"ja":"..."},{...},{...}]';
   const jsonShape = points.length
     ? bodiesShape + ',"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}\n("verdict" must be one of "valid", "weak", "invalid")'
     : bodiesShape + '}';
@@ -56,33 +63,22 @@ Tasks for these arguments:
 TOPIC: ${topic}
 STANCE: ${stanceText}
 
-Create the content of THREE body paragraphs, each presenting a DIFFERENT argument supporting the stance.
-Do NOT write free-form paragraphs. Instead, fill the slots of the following fixed templates so that each assembled paragraph reads as natural, formal written English.
+Write the THREE body paragraphs of a model answer. Each body presents a DIFFERENT argument that supports the stance, and the three arguments must be clearly distinct (e.g. an individual angle, a social/economic angle, and an international/future angle).
 
-Body 1 template:
-"${TEMPLATE_STRINGS[0]}"
+For EACH body, first decide its core "argument": a substantial noun phrase of 5–8 words naming WHAT structurally changes.
+${ARGUMENT_PRINCIPLES}
 
-Body 2 template:
-"${TEMPLATE_STRINGS[1]}"
+Then write the paragraph itself as four sentences following this fixed architecture:
+${BODY_ARCHITECTURE}
 
-Body 3 template:
-"${TEMPLATE_STRINGS[2]}"
-
-Grammar and richness constraints for the slots (CRITICAL — each value must fit its template grammatically):
-${SLOT_CONSTRAINTS}
-
-Word-count constraint (STRICT, HIGHEST PRIORITY):
-- The total word count of each ASSEMBLED paragraph (fixed template words + your slot words) must be 45–50 words.
-- The fixed template words already account for: Body 1 = 22 words, Body 2 = 18 words, Body 3 = 20 words.
-- So your slot values must total roughly: Body 1: 23–28 words, Body 2: 27–32 words, Body 3: 25–30 words.
-- Use the budget for depth: precise modifiers and mechanisms, not filler words.
+Length constraint (STRICT):
+- Each body paragraph must total 45–60 words (roughly four sentences of 12–15 words each).
+- Use the budget for depth: precise mechanisms and consequences, not filler.
 
 General rules:
-- Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1
-- Slot values: no sentence-final period, start lowercase unless a proper noun
-- The three arguments must be clearly distinct (e.g. economic / social / ethical angles)
-- Every {result} must point in the SAME direction as the stance
-- For each body, also provide "ja": a natural Japanese translation of the FULL assembled paragraph${pointsSection}
+- Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1.
+- The final consequence of every body must point in the SAME direction as the stance.
+- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph.${pointsSection}
 
 Return ONLY this JSON structure:
 ${jsonShape}`;
@@ -103,34 +99,35 @@ Return ONLY this JSON structure:
 {"themes":[{"topic":"...","topicJa":"...","category":"..."}]}`;
 }
 
-const SLOT_KEYS = ['reason', 'principle', 'condition', 'result', 'keyConcept', 'conclusion'];
-
-/* 評価用にサーバー側でも Body を組み立てるためのテンプレート文字列 */
-const TEMPLATE_STRINGS = [
-  'First and foremost, {reason} is a crucial factor. This is because {principle}. In essence, when {condition}, it leads to {result}. Therefore, {keyConcept} plays a key role in {conclusion}.',
-  'Another key point is {reason}. This is largely because {principle}. Put simply, whenever {condition}, it results in {result}. Hence, {keyConcept} is essential for {conclusion}.',
-  'A further point is {reason}. The primary reason is that {principle}. In other words, if {condition}, this leads to {result}. Accordingly, {keyConcept} is vital for {conclusion}.',
-];
-
-/* bodies（[{slots:{...}}, ...] 形式）からテンプレートに沿った完成文を組み立てる。
-   構造が不正（3件揃っていない・スロット欠落）なら null */
+/* bodies（[{argument, sentences:[...], ja}, ...]）を段落テキスト配列に組み立てる。
+   構造が不正（3件揃っていない・文が空）なら null */
 function assembleEssay(bodies) {
   if (!Array.isArray(bodies) || bodies.length < 3) return null;
   const paragraphs = [];
   for (let i = 0; i < 3; i++) {
-    const slots = bodies[i] && bodies[i].slots;
-    if (!slots) return null;
-    for (const key of SLOT_KEYS) {
-      if (!String(slots[key] || '').trim()) return null;
-    }
-    paragraphs.push(TEMPLATE_STRINGS[i].replace(/\{(\w+)\}/g, (m, key) => String(slots[key] || '').trim()));
+    const b = bodies[i];
+    if (!b || !Array.isArray(b.sentences)) return null;
+    const text = b.sentences.map(s => String(s || '').trim()).filter(Boolean).join(' ');
+    if (!text) return null;
+    paragraphs.push(text);
   }
   return paragraphs;
 }
 
+/* Gemini から返った1つの body を検証・整形する（不正なら null） */
+function normalizeBody(raw) {
+  if (!raw) return null;
+  const argument = String(raw.argument || '').trim().replace(/[.。]+$/, '').slice(0, 200);
+  const sentences = Array.isArray(raw.sentences)
+    ? raw.sentences.map(s => String(s || '').trim()).filter(Boolean).map(s => s.slice(0, 300))
+    : [];
+  if (!argument || sentences.length < 3) return null;
+  return { argument, sentences, ja: String(raw.ja || '').trim().slice(0, 1000) };
+}
+
 function buildEvalPrompt(topic, stance, paragraphs) {
   return `You are a strict but fair examiner for the EIKEN Grade 1 English writing test.
-Evaluate the following THREE body paragraphs written for the prompt below. The introduction and conclusion are intentionally omitted — judge these as body paragraphs only, and do not penalize their absence. The paragraphs follow a fixed rhetorical template by design, and concrete examples are intentionally omitted from the template for concision — do NOT penalize the repeated structure or the absence of example sentences; judge the depth of the reasoning instead.
+Evaluate the following THREE body paragraphs written for the prompt below. The introduction and conclusion are intentionally omitted — judge these as body paragraphs only, and do not penalize their absence. By design, each body follows a fixed four-sentence rhetorical role: Body 1 argues by causal necessity, Body 2 by empirical evidence, and Body 3 by concession and rebuttal. Do NOT penalize this deliberate structure; judge the depth and persuasiveness of the reasoning within it.
 
 TOPIC: ${topic}
 STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
@@ -141,9 +138,9 @@ BODY PARAGRAPHS:
 3. ${paragraphs[2]}
 
 Score each criterion from 0 to 10 (0.5 steps allowed):
-- structure: within each paragraph, is the flow (topic sentence → underlying principle → condition and consequence → conclusion) consistent and easy for a grader to follow?
-- content: are the three arguments well-chosen, clearly distinct, and logically developed with real depth (mechanisms and specific consequences rather than vague claims)? Is it clear WHY each argument supports the stance?
-- language: grammar accuracy, natural phrasing, and vocabulary range appropriate for EIKEN Grade 1 (CEFR C1)
+- structure: within each paragraph, does the four-sentence flow (claim → development → evidence/escalation → landing) hold together and read logically? Does Body 3's concession-rebuttal actually neutralize the counterargument?
+- content: are the three arguments well-chosen, clearly distinct, and developed with real depth (concrete mechanisms, evidence, and consequences rather than vague claims)? Is it clear WHY each argument supports the stance?
+- language: grammar accuracy, natural phrasing, and vocabulary range appropriate for EIKEN Grade 1 (CEFR C1).
 
 For each criterion also write one short comment IN JAPANESE: what is good and what specifically should be improved.
 
@@ -213,7 +210,6 @@ function buildRewriteBodyPrompt(topic, stance, bodyIndex, userPoint) {
   const stanceText = stance === 'agree'
     ? 'AGREE — support the statement / answer YES'
     : 'DISAGREE — oppose the statement / answer NO';
-  const budget = BODY_WORD_BUDGET[bodyIndex];
   return `You are an expert writing coach for the EIKEN Grade 1 English essay.
 
 TOPIC: ${topic}
@@ -221,26 +217,23 @@ STANCE: ${stanceText}
 
 The learner wants to rewrite ONE body paragraph built around this argument idea (may be rough, in Japanese or English): "${userPoint}"
 
-Fill the slots of this fixed template so the assembled paragraph reads as natural, formal written English:
-"${TEMPLATE_STRINGS[bodyIndex]}"
+This is body number ${bodyIndex + 1}, whose rhetorical role is "${BODY_ROLE_NAMES[bodyIndex]}". Write it as four sentences following that role's fixed architecture:
+${BODY_ARCHITECTURE}
 
-Grammar and richness constraints for the slots (CRITICAL — each value must fit its template grammatically):
-${SLOT_CONSTRAINTS}
+First set the paragraph's core "argument": a substantial noun phrase of 5–8 words. ADOPT the learner's idea as this argument — rephrase it to satisfy the three principles below; don't just copy it verbatim.
+${ARGUMENT_PRINCIPLES}
 
-Word-count constraint (STRICT, HIGHEST PRIORITY):
-- The total word count of the ASSEMBLED paragraph (fixed template words + your slot words) must be 45–50 words.
-- The fixed template words already account for ${budget.fixed} words, so your slot values must total roughly ${budget.slotMin}–${budget.slotMax} words.
-- Use the budget for depth: precise modifiers and mechanisms, not filler words.
+Length constraint (STRICT):
+- The paragraph must total 45–60 words (roughly four sentences of 12–15 words each).
 
 General rules:
-- Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1
-- Slot values: no sentence-final period, start lowercase unless a proper noun
-- The {result} must point in the SAME direction as the stance
-- ADOPT the learner's idea as the {reason} — rephrase it to satisfy the neutral/structural/abstract principles above; don't just copy it verbatim
-- Provide "ja": a natural Japanese translation of the FULL assembled paragraph
+- Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1.
+- Every sentence is complete: capitalized start, period at the end.
+- The final consequence must point in the SAME direction as the stance.
+- Provide "ja": a natural Japanese translation of the FULL paragraph.
 
 Return ONLY this JSON:
-{"slots":{"reason":"...","principle":"...","condition":"...","result":"...","keyConcept":"...","conclusion":"..."},"ja":"..."}`;
+{"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
 }
 
 /* エッセイの採点・論点判定についてGeminiと会話するためのシステム文脈 */
@@ -251,7 +244,7 @@ function buildChatSystemContext(topic, stance, bodies, evaluation, pointsReview)
 TOPIC: ${topic}
 STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
 
-CURRENT BODY PARAGRAPHS:
+CURRENT BODY PARAGRAPHS (Body 1 = causal necessity, Body 2 = empirical evidence, Body 3 = concession-rebuttal):
 ${paragraphs.map((p, i) => `${i + 1}. ${p}`).join('\n')}`;
 
   if (evaluation && typeof evaluation.average === 'number') {
@@ -300,35 +293,6 @@ async function callGeminiChat(systemText, turns, apiKey, model) {
   return text.trim();
 }
 
-/* 学習者が自由入力したスロット値の判定・添削プロンプト */
-function buildReviewSlotPrompt(topic, stance, bodyIndex, slotKey, userText, slots) {
-  const assembled = TEMPLATE_STRINGS[bodyIndex].replace(/\{(\w+)\}/g, (m, k) =>
-    k === slotKey ? `[[${slotKey}]]` : String(slots[k] || '').trim());
-  return `You are an expert EIKEN Grade 1 writing coach.
-
-TOPIC: ${topic}
-STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
-
-A learner is practicing a fixed-template body paragraph. This is the current paragraph, with the slot they want to fill marked as [[${slotKey}]]:
-
-"${assembled}"
-
-The learner proposes this text for the [[${slotKey}]] slot (it may contain English errors or Japanese):
-"${userText}"
-
-Judge the proposal and produce a corrected version:
-- Grammar fit: the corrected value must fit the marked position grammatically (same role as expected there: noun phrase / clause etc.), with no sentence-final period and a lowercase start unless a proper noun.
-- Direction: the resulting sentence must support the stance above.
-- Register: natural, formal written English appropriate for EIKEN Grade 1.
-- Length: keep the corrected value concise (roughly 2–8 words) so the whole paragraph stays near 45–50 words.
-- verdict: "ok" (usable as-is; return it unchanged as corrected), "minor" (good idea, wording corrected), or "rework" (wrong direction, wrong grammatical role, or does not fit — corrected shows a repaired alternative built on their idea).
-- explanation: IN JAPANESE, briefly state what was wrong (or good) and why the correction works.
-- ja: a natural Japanese translation of the FULL paragraph with your corrected value in place.
-
-Return ONLY this JSON:
-{"verdict":"ok","corrected":"...","explanation":"...","ja":"..."}`;
-}
-
 /* 論点だしトレーニング（生成済みエッセイに対する反復練習）の判定プロンプト */
 function buildReviewPointsPrompt(topic, stance, userPoints, existingReasons) {
   return `You are an expert coach for the EIKEN Grade 1 English essay brainstorming stage.
@@ -342,10 +306,7 @@ ${userPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}
 For reference, here are three model arguments already prepared for this topic (the learner may or may not have seen these before):
 ${existingReasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
-A strong argument follows three principles:
-1. NEUTRAL: it describes WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")
-2. STRUCTURAL: it names a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"
-3. ABSTRACT: it is one level more abstract than a narrow concrete anecdote (e.g. "AI does my homework" → "the learning process is altered")
+${ARGUMENT_PRINCIPLES}
 
 For EACH of the learner's arguments, judge:
 - Is it a valid, exam-appropriate argument that supports the stance (correct direction)?
@@ -388,35 +349,6 @@ module.exports = async (req, res) => {
   }
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
 
-  if (mode === 'reviewSlot') {
-    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
-      return res.status(400).json({ error: 'topic / stance が不正です' });
-    }
-    const bi = Number(req.body.bodyIndex);
-    const slotKey = req.body.slotKey;
-    const userText = String(req.body.userText || '').trim().slice(0, 300);
-    if (!(bi >= 0 && bi <= 2) || !SLOT_KEYS.includes(slotKey) || !userText) {
-      return res.status(400).json({ error: 'reviewSlot の入力が不正です' });
-    }
-    const slots = {};
-    for (const k of SLOT_KEYS) slots[k] = String((req.body.slots || {})[k] || '').trim().slice(0, 200);
-    try {
-      const raw = await callGemini(
-        buildReviewSlotPrompt(topic.trim().slice(0, 300), stance, bi, slotKey, userText, slots),
-        apiKey, model, 0.2);
-      const corrected = String((raw && raw.corrected) || '').trim().replace(/[.。]+$/, '').slice(0, 200);
-      if (!corrected) return res.status(502).json({ error: '添削結果が取得できませんでした' });
-      return res.status(200).json({
-        verdict: ['ok', 'minor', 'rework'].includes(raw.verdict) ? raw.verdict : 'minor',
-        corrected,
-        explanation: String(raw.explanation || '').slice(0, 500),
-        ja: String(raw.ja || '').slice(0, 1000),
-      });
-    } catch (e) {
-      return res.status(e.status || 502).json({ error: e.message });
-    }
-  }
-
   // 各モードは Gemini 呼び出し1回のみで完結させる（Vercel の関数タイムアウト対策）。
   // 生成と採点を別リクエストに分離しているのもこのため。
   if (mode === 'essay') {
@@ -429,10 +361,11 @@ module.exports = async (req, res) => {
     const prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance, points);
     try {
       const parsed = await callGemini(prompt, apiKey, model);
-      if (!assembleEssay(parsed.bodies)) {
-        return res.status(502).json({ error: '生成結果の形式が不正です（スロットが不足しています）' });
+      const bodies = Array.isArray(parsed.bodies) ? parsed.bodies.slice(0, 3).map(normalizeBody) : [];
+      if (bodies.length < 3 || bodies.some(b => !b)) {
+        return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
-      return res.status(200).json({ bodies: parsed.bodies, pointsReview: normalizePointsReview(parsed.pointsReview) });
+      return res.status(200).json({ bodies, pointsReview: normalizePointsReview(parsed.pointsReview) });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
@@ -473,11 +406,11 @@ module.exports = async (req, res) => {
     }
     try {
       const parsed = await callGemini(buildRewriteBodyPrompt(topic.trim().slice(0, 300), stance, bi, userPoint), apiKey, model);
-      const slots = parsed && parsed.slots;
-      if (!slots || SLOT_KEYS.some(k => !String(slots[k] || '').trim())) {
-        return res.status(502).json({ error: '生成結果の形式が不正です（スロットが不足しています）' });
+      const body = normalizeBody(parsed);
+      if (!body) {
+        return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
-      return res.status(200).json({ slots, ja: String(parsed.ja || '').trim() });
+      return res.status(200).json(body);
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

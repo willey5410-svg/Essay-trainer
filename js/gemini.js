@@ -37,24 +37,25 @@ function cleanSlotValue(v) {
   return String(v || '').trim().replace(/[.。]+$/, '');
 }
 
+/* サーバーが整形して返す body（argument / sentences / ja）を検証・整形する */
+function parseBody(b, i) {
+  const argument = cleanSlotValue(b && b.argument);
+  const sentences = (b && Array.isArray(b.sentences) ? b.sentences : [])
+    .map(s => String(s || '').trim()).filter(Boolean);
+  if (!argument || sentences.length < 3) {
+    // アプリ更新直後に古いページがサーバーの新形式を受け取ると起きる
+    throw new Error(`生成結果の形式が不正です（Body ${i + 1} の本文が揃っていません）。アプリが更新された直後の可能性があるため、ページを再読み込みしてからもう一度お試しください。`);
+  }
+  return { argument, sentences, ja: String((b && b.ja) || '').trim() };
+}
+
 async function generateEssaySet(theme, stance, userPoints) {
   const points = (userPoints || []).map(p => String(p).trim()).filter(Boolean).slice(0, 3);
   const data = await apiCall({ mode: 'essay', topic: theme.topic, stance, userPoints: points });
   if (!data || !Array.isArray(data.bodies) || data.bodies.length < 3) {
     throw new Error('生成結果の形式が不正です（Body が3つ揃っていません）');
   }
-  const bodies = data.bodies.slice(0, 3).map((b, i) => {
-    const slots = {};
-    for (const key of SLOT_KEYS) {
-      const v = cleanSlotValue(b.slots && b.slots[key]);
-      if (!v) {
-        // アプリ更新直後に古いページがサーバーの新形式を受け取ると起きる
-        throw new Error(`生成結果の形式が不正です（Body ${i + 1} の ${key} が空です）。アプリが更新された直後の可能性があるため、ページを再読み込みしてからもう一度お試しください。`);
-      }
-      slots[key] = v;
-    }
-    return { slots, ja: String(b.ja || '').trim() };
-  });
+  const bodies = data.bodies.slice(0, 3).map(parseBody);
   return {
     id: 'gen-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     topic: theme.topic,
@@ -84,7 +85,7 @@ async function reviewPoints(set, userPoints) {
     topic: set.topic,
     stance: set.stance,
     userPoints: points,
-    existingReasons: set.bodies.map(b => b.slots.reason),
+    existingReasons: set.bodies.map(b => b.argument),
   });
   if (!data || !Array.isArray(data.pointsReview) || !data.pointsReview.length) {
     throw new Error('判定結果の形式が不正です');
@@ -95,14 +96,7 @@ async function reviewPoints(set, userPoints) {
 /* 論点だしトレーニングで作った論点を核に、Body 1本を丸ごと書き直す */
 async function rewriteBodyWithPoint(set, bodyIndex, userPoint) {
   const data = await apiCall({ mode: 'rewriteBody', topic: set.topic, stance: set.stance, bodyIndex, userPoint });
-  if (!data || !data.slots) throw new Error('生成結果の形式が不正です');
-  const slots = {};
-  for (const key of SLOT_KEYS) {
-    const v = cleanSlotValue(data.slots[key]);
-    if (!v) throw new Error(`生成結果の形式が不正です（${SLOT_LABELS[key]} が空です）`);
-    slots[key] = v;
-  }
-  return { slots, ja: String(data.ja || '').trim() };
+  return parseBody(data, bodyIndex);
 }
 
 /* 採点・論点判定についてGeminiと会話する（履歴は呼び出し側が保持） */
@@ -119,21 +113,6 @@ async function chatWithGemini(set, history, message) {
   });
   if (!data || !data.reply) throw new Error('応答の形式が不正です');
   return data.reply;
-}
-
-/* 自由入力したスロット値の判定・添削 */
-async function reviewSlot(set, bodyIdx, slotKey, userText) {
-  const data = await apiCall({
-    mode: 'reviewSlot',
-    topic: set.topic,
-    stance: set.stance,
-    bodyIndex: bodyIdx,
-    slotKey,
-    userText,
-    slots: set.bodies[bodyIdx].slots,
-  });
-  if (!data || !data.corrected) throw new Error('添削結果の形式が不正です');
-  return data;
 }
 
 async function generateThemes(existingTopics) {
