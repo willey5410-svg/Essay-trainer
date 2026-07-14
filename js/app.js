@@ -39,6 +39,7 @@ let state = {
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
   bodyRewrite: null,     // {setId, point, bodyIdx, result, error, busy}
+  bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
   chatSetId: null,
   chatDraft: '',
   chatBusy: false,
@@ -261,6 +262,7 @@ function render() {
   if (state.modal === 'keyword') html += modalKeyword();
   if (state.modal === 'themeAdd') html += modalThemeAdd();
   if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
+  if (state.modal === 'bodyEdit') html += modalBodyEdit();
   if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
 }
@@ -448,6 +450,7 @@ function viewStudy() {
       ${linesHtml}
       ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
       <div class="row">
+        <button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
         ${body.original ? `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>` : ''}
       </div>
@@ -696,8 +699,89 @@ function applyBodyRewrite() {
   saveSetsList(sets);
   state.modal = null;
   state.bodyRewrite = null;
-  state.notice = `Body ${br.bodyIdx + 1} をあなたの論点で書き換えました`;
+  state.notice = `Body ${br.bodyIdx + 1} をあなたの論点で書き換えました。再採点します。`;
   render();
+  autoRescore(set.id);
+}
+
+/* ---------- 色付き（自由作文）部分の手直し ---------- */
+
+/* 文を「定型表現（ロック）」と「自由部分（入力欄）」に分け、自由部分だけ編集させる。
+   保存時は編集値と定型表現を元の順序で連結し直し、余分な空白を整えて1文に戻す。 */
+function normalizeSentence(parts) {
+  return parts.map(x => String(x).trim()).filter(Boolean).join(' ')
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function modalBodyEdit() {
+  const be = state.bodyEdit;
+  const set = findSet(be.setId);
+  if (!set) return '';
+  const body = set.bodies[be.bodyIdx];
+  const role = BODY_ROLES[be.bodyIdx] || BODY_ROLES[0];
+  const linesHtml = (body.sentences || []).map((s, si) => {
+    const inner = String(s).split(TPL_RE).map((seg, gi) => {
+      if (gi % 2) return esc(seg); // 定型表現はロック
+      if (!seg.trim()) return ''; // 定型表現の前後などの構造的な空白には入力欄を出さない
+      const id = `fe-${si}-${gi}`;
+      const val = (be.vals && id in be.vals) ? be.vals[id] : seg.trim();
+      const size = Math.max(6, Math.min(44, val.length + 2));
+      return `<input class="free-input" id="${id}" value="${esc(val)}" size="${size}" spellcheck="false">`;
+    }).join(' ');
+    return `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${inner}</p>`;
+  }).join('');
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>✏️ ${role.name} の内容を編集</h3>
+      <p class="hint-text">黒字の定型表現は固定です。<span class="free">色付きの入力欄</span>だけを書き換えられます。保存すると採点をやり直します（元に戻すこともできます）。</p>
+      ${linesHtml}
+      ${be.error ? `<p class="field-error">${esc(be.error)}</p>` : ''}
+      <div class="row">
+        <button class="btn" data-action="body-edit-save">保存して採点</button>
+        <button class="btn ghost" data-action="close-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function applyBodyEdit() {
+  const be = state.bodyEdit;
+  if (!be) return;
+  const sets = getSets();
+  const set = sets.find(s => s.id === be.setId);
+  if (!set) return;
+  const body = set.bodies[be.bodyIdx];
+  const newSentences = (body.sentences || []).map((s, si) => {
+    const parts = String(s).split(TPL_RE).map((seg, gi) => {
+      if (gi % 2) return seg; // 定型表現はそのまま
+      const id = `fe-${si}-${gi}`;
+      const dom = document.getElementById(id);
+      return dom ? dom.value : (be.vals && id in be.vals ? be.vals[id] : seg);
+    });
+    return normalizeSentence(parts);
+  });
+  if (newSentences.some(s => !s)) {
+    be.error = '空になった文があります。各文に内容を入力してください。';
+    render();
+    return;
+  }
+  // 書き換え前の Body をスナップショット（初回のみ）。以降の編集でも真の原文を保持する。
+  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '' };
+  body.sentences = newSentences;
+  set.evaluation = null; // 内容が変わったため採点をやり直す
+  saveSetsList(sets);
+  state.modal = null;
+  state.bodyEdit = null;
+  state.notice = `${(BODY_ROLES[be.bodyIdx] || {}).name || 'Body'} を編集しました。再採点します。`;
+  render();
+  autoRescore(set.id);
+}
+
+/* 合言葉があれば採点をバックグラウンドで走らせる（無ければ「採点する」ボタンから手動実行） */
+function autoRescore(setId) {
+  if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
 }
 
 /* ---------- 採点・論点判定についてGeminiと会話する ---------- */
@@ -1073,9 +1157,22 @@ $app.addEventListener('click', (ev) => {
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
-    state.bodyRewrite = null; state.chatError = null;
+    state.bodyRewrite = null; state.bodyEdit = null; state.chatError = null;
     render();
   }
+  else if (a === 'open-body-edit') {
+    const bi = Number(el.dataset.body);
+    const set = findSet(state.setId);
+    if (!set) return;
+    const vals = {};
+    (set.bodies[bi].sentences || []).forEach((s, si) => {
+      String(s).split(TPL_RE).forEach((seg, gi) => { if (gi % 2 === 0) vals[`fe-${si}-${gi}`] = seg.trim(); });
+    });
+    state.bodyEdit = { setId: set.id, bodyIdx: bi, vals, error: null };
+    state.modal = 'bodyEdit';
+    render();
+  }
+  else if (a === 'body-edit-save') { applyBodyEdit(); }
   else if (a === 'undo-body') {
     const bi = Number(el.dataset.body);
     const sets = getSets();
@@ -1088,8 +1185,9 @@ $app.addEventListener('click', (ev) => {
       delete body.original;
       set.evaluation = null; // 内容が変わったため採点をやり直す
       saveSetsList(sets);
-      state.notice = '元の模範解答に戻しました';
+      state.notice = '元の模範解答に戻しました。再採点します。';
       render();
+      autoRescore(set.id);
     }
   }
   else if (a === 'save-keyword') { doSaveKeyword(el.dataset.from); }
@@ -1225,6 +1323,9 @@ $app.addEventListener('keydown', (ev) => {
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
 $app.addEventListener('input', (ev) => {
   if (ev.target.id === 'chatInput') state.chatDraft = ev.target.value;
+  if (ev.target.classList.contains('free-input') && state.bodyEdit) {
+    state.bodyEdit.vals[ev.target.id] = ev.target.value;
+  }
 });
 
 document.getElementById('importFile').addEventListener('change', (ev) => {
