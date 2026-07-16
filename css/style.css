@@ -294,7 +294,8 @@ section { margin-bottom: 8px; }
 .drill-ch-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
 .drill-ch-row .btn { flex-shrink: 0; min-width: 4.4em; }
 .drill-ch-row input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; font-family: inherit; }
-.drill-ch-summary { font-size: 0.78rem; color: var(--sub); margin-bottom: 10px; }
+.drill-ch-summary { font-size: 0.78rem; color: var(--sub); margin-bottom: 10px; padding-left: 20px; }
+.drill-ch-summary li { margin-bottom: 3px; }
 .dg-wrap { overflow-x: auto; }
 .dg-table { border-collapse: collapse; width: 100%; }
 .dg-table th { font-size: 0.7rem; color: var(--sub); font-weight: 600; padding: 4px 3px; text-align: center; }
@@ -310,9 +311,13 @@ section { margin-bottom: 8px; }
 .dg-dot { color: var(--sub); }
 .dg-plus { color: var(--green); font-weight: 700; }
 .dg-minus { color: var(--red); font-weight: 700; }
+.dg-sup { font-size: 0.6rem; color: var(--sub); margin-left: 1px; }
+.drill-change-chip { font-size: 0.82rem; padding: 6px 12px; }
+.drill-change-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .drill-cand { padding: 10px 14px; }
 .drill-cand.picked { border-color: var(--accent); }
 .drill-cand-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer; font-size: 0.92rem; }
+.drill-cand-src { font-size: 0.76rem; color: var(--sub); margin-top: 4px; padding-left: 24px; }
 .drill-checks label { display: block; font-size: 0.8rem; color: var(--sub); margin: 10px 0 4px; }
 .drill-checks input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; font-family: inherit; }
 .drill-review-text { font-size: 0.92rem; }

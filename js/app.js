@@ -698,13 +698,15 @@ function drillStage2(d) {
     <tbody>${DRILL_DOMAINS.map((dom, di) => `<tr><th>${esc(dom.ja)}</th>${DRILL_LAYERS.map((l, li) => {
       const c = d.candidates.find(x => x.layer === li && x.domain === di);
       const mark = c ? (c.side === 'agree' ? '<span class="dg-plus">＋</span>' : '<span class="dg-minus">−</span>') : '<span class="dg-dot">·</span>';
-      return `<td><button class="dg-cell${c ? ' filled' : ''}" data-action="drill-cell" data-layer="${li}" data-domain="${di}" title="${esc(l.ja)} × ${esc(dom.ja)}">${mark}</button></td>`;
+      const sup = c && typeof c.changeIdx === 'number' ? `<sup class="dg-sup">${c.changeIdx + 1}</sup>` : '';
+      const titleNote = c ? ` — ${c.note}` : '';
+      return `<td><button class="dg-cell${c ? ' filled' : ''}" data-action="drill-cell" data-layer="${li}" data-domain="${di}" title="${esc(l.ja)} × ${esc(dom.ja)}${esc(titleNote)}">${mark}${sup}</button></td>`;
     }).join('')}</tr>`).join('')}</tbody></table>`;
-  const chSummary = d.changes.filter(c => c.text.trim()).map(c => `${c.dir === 'inc' ? '📈' : '📉'}${esc(c.text)}`).join('　');
+  const chSummary = d.changes.filter(c => c.text.trim()).map((c, i) => `<li>${c.dir === 'inc' ? '📈' : '📉'}${esc(c.text)}<span class="stat"> — ${d.candidates.filter(x => x.changeIdx === i).length}セルで走査済み</span></li>`).join('');
   return `<div class="card">
     <h3>Stage 2: マトリクス走査 <span class="stat">候補 ${filled} / 5個以上</span></h3>
-    <p class="hint-text">セルをタップし「この層のこのドメインにプラスかマイナスか」を機械的に問います。思いつきを待たず、走査で生成します。<strong>両側（賛成に利する／反対に利する）を出す</strong>のがコツです。</p>
-    <p class="drill-ch-summary">${chSummary}</p>
+    <p class="hint-text">セルをタップすると、まず<strong>Stage 1のどの変化を問うか</strong>を選び、その変化が「この層のこのドメインにプラスかマイナスか」を機械的に問います。思いつきを待たず、リストを走査して生成します。同じ変化を複数セルで問っても構いません。<strong>両側（賛成に利する／反対に利する）を出す</strong>のがコツです。</p>
+    <ol class="drill-ch-summary">${chSummary}</ol>
     <div class="dg-wrap">${grid}</div>
     <div class="row">
       <button class="btn" data-action="drill-to-3" ${filled < 5 ? 'disabled' : ''}>次へ（フィルタ）</button>
@@ -722,11 +724,13 @@ function drillStage3(d) {
   const items = side.map(c => {
     const on = d.finalists.includes(c.id);
     const det = d.details[c.id] || {};
+    const srcChange = d.changes[c.changeIdx];
     return `<div class="card drill-cand${on ? ' picked' : ''}">
       <label class="drill-cand-head">
         <input type="checkbox" data-action="drill-finalist" data-id="${esc(c.id)}" ${on ? 'checked' : ''}>
         <span class="badge src">${esc(DRILL_LAYERS[c.layer].ja)} × ${esc(DRILL_DOMAINS[c.domain].ja)}</span> ${esc(c.note)}
       </label>
+      ${srcChange ? `<div class="drill-cand-src">← ${srcChange.dir === 'inc' ? '📈' : '📉'} ${esc(srcChange.text)}</div>` : ''}
       ${on ? `<div class="drill-checks">
         <label>① メカニズム：「As X…, Y also grows」の連動を英語1文で</label>
         <input type="text" class="dr-fd" data-cid="${esc(c.id)}" data-f="mech" value="${esc(det.mech || '')}" placeholder="As AI takes over routine tasks, demand for retraining also grows.">
@@ -828,15 +832,24 @@ function drillStage5(d) {
     </div>`;
 }
 
-/* セル編集モーダル：層×ドメインの交点に観点を一言＋賛否どちらに利するかで記録 */
+/* セル編集モーダル：Stage 1の変化を1つ選び、その変化がこの層×ドメインにプラスかマイナスかを一言＋賛否で記録 */
 function modalDrillCell() {
   const cd = state.cellDraft;
   if (!cd) return '';
-  const existing = state.drill && state.drill.candidates.find(c => c.layer === cd.layer && c.domain === cd.domain);
+  const d = state.drill;
+  const existing = d && d.candidates.find(c => c.layer === cd.layer && c.domain === cd.domain);
+  const changes = d.changes.filter(c => c.text.trim());
+  const changeChips = changes.map((c, i) => {
+    // cd.changeIdx は d.changes 内の実インデックス。filter 後の表示順とズレるため元配列で引き直す
+    const realIdx = d.changes.indexOf(c);
+    return `<button class="chip drill-change-chip${cd.changeIdx === realIdx ? ' active' : ''}" data-action="drill-cell-change" data-idx="${realIdx}">${c.dir === 'inc' ? '📈' : '📉'} ${esc(c.text)}</button>`;
+  }).join('');
   return `<div class="overlay" data-action="close-modal">
     <div class="modal" data-stop>
       <h3>${esc(DRILL_LAYERS[cd.layer].ja)} × ${esc(DRILL_DOMAINS[cd.domain].ja)}</h3>
-      <p class="hint-text">この層のこのドメインで<strong>何が起きるか</strong>を一言で（中立に・構造で・一段抽象化して）。</p>
+      <p class="hint-text">Stage 1で挙げた<strong>どの変化</strong>について、この層×ドメインを問いますか？</p>
+      <div class="chips">${changeChips || '<span class="hint-text">Stage 1に変化がありません</span>'}</div>
+      <p class="hint-text">選んだ変化がこの層のこのドメインで<strong>具体的に何を引き起こすか</strong>を一言で（中立に・構造で・一段抽象化して）。</p>
       <input type="text" id="dcNote" value="${esc(cd.note)}" placeholder="例：再教育の需要が拡大する">
       <label>この観点はどちらの立場に利するか</label>
       <div class="seg">
@@ -844,7 +857,7 @@ function modalDrillCell() {
         <button class="seg-btn${cd.side === 'disagree' ? ' active' : ''}" data-action="drill-cell-side" data-side="disagree">反対に利する −</button>
       </div>
       <div class="row">
-        <button class="btn" data-action="drill-cell-save">保存</button>
+        <button class="btn" data-action="drill-cell-save" ${cd.changeIdx === null ? 'disabled' : ''}>保存</button>
         ${existing ? '<button class="btn ghost" data-action="drill-cell-del">この観点を削除</button>' : ''}
         <button class="btn ghost" data-action="close-modal">キャンセル</button>
       </div>
@@ -923,6 +936,7 @@ async function doDrillJudge() {
       changes: d.changes.filter(c => c.text),
       candidates: d.candidates.map(c => ({
         layer: DRILL_LAYERS[c.layer].ja, domain: DRILL_DOMAINS[c.domain].ja, side: c.side, note: c.note,
+        change: (d.changes[c.changeIdx] || {}).text || '',
       })),
       finalists,
       casting: d.casting,
@@ -1383,22 +1397,29 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'drill-cell') {
     const layer = Number(el.dataset.layer), domain = Number(el.dataset.domain);
     const c = state.drill.candidates.find(x => x.layer === layer && x.domain === domain);
-    state.cellDraft = { layer, domain, note: c ? c.note : '', side: c ? c.side : 'agree' };
+    const filled = state.drill.changes.filter(ch => ch.text.trim());
+    const defaultIdx = filled.length === 1 ? state.drill.changes.indexOf(filled[0]) : null;
+    state.cellDraft = {
+      layer, domain, note: c ? c.note : '', side: c ? c.side : 'agree',
+      changeIdx: c ? c.changeIdx : defaultIdx,
+    };
     state.modal = 'drillCell';
     render();
     const inp = document.getElementById('dcNote');
     if (inp) inp.focus();
   }
+  else if (a === 'drill-cell-change') { state.cellDraft.changeIdx = Number(el.dataset.idx); render(); }
   else if (a === 'drill-cell-side') { state.cellDraft.side = el.dataset.side; render(); }
   else if (a === 'drill-cell-save') {
     const cd = state.cellDraft;
+    if (cd.changeIdx === null || cd.changeIdx === undefined) return;
     const note = ((document.getElementById('dcNote') || {}).value || cd.note).trim();
     if (!note) return;
     const d = state.drill;
     const id = `c${cd.layer}-${cd.domain}`;
     const existing = d.candidates.find(x => x.id === id);
-    if (existing) { existing.note = note; existing.side = cd.side; }
-    else d.candidates.push({ id, layer: cd.layer, domain: cd.domain, note, side: cd.side });
+    if (existing) { existing.note = note; existing.side = cd.side; existing.changeIdx = cd.changeIdx; }
+    else d.candidates.push({ id, layer: cd.layer, domain: cd.domain, note, side: cd.side, changeIdx: cd.changeIdx });
     state.modal = null;
     state.cellDraft = null;
     render();

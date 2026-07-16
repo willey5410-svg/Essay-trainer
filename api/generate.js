@@ -94,8 +94,8 @@ TOPIC: ${topic}
 STEP 1 — CHANGE LIST (what increases / decreases):
 ${ws.changes.map(c => `- ${c.dir === 'dec' ? 'DECREASES' : 'INCREASES'}: ${c.text}`).join('\n')}
 
-STEP 2 — MATRIX SCAN CANDIDATES (cell = layer × domain; side = which stance it favors):
-${ws.candidates.map((c, i) => `${i + 1}. [${c.layer} × ${c.domain}] (favors ${c.side === 'agree' ? 'AGREE' : 'DISAGREE'}): ${c.note}`).join('\n')}
+STEP 2 — MATRIX SCAN CANDIDATES (each candidate traces back to ONE change from Step 1; cell = layer × domain; side = which stance it favors):
+${ws.candidates.map((c, i) => `${i + 1}. from change "${c.change}" → [${c.layer} × ${c.domain}] (favors ${c.side === 'agree' ? 'AGREE' : 'DISAGREE'}): ${c.note}`).join('\n')}
 
 STEP 3 — CHOSEN STANCE: ${stanceText}
 FINALISTS (3, self-checked against the three criteria):
@@ -109,7 +109,7 @@ CONCESSION MATERIAL: ${ws.concession || '(none chosen)'}
 
 Review the worksheet IN JAPANESE, concretely and encouragingly:
 - changesReview: is the change list truly neutral increases/decreases, or did claims/judgments leak in? Quote the problematic item if any.
-- scanReview: quality and coverage of the scan (both sides scanned? cells well spread?).
+- scanReview: quality and coverage of the scan — were ALL change-list items actually traced into at least one cell (name any change from Step 1 that was never scanned), were both sides scanned, and were cells well spread across layers/domains rather than clustered?
 - missedCells: up to 3 promising cells the learner did NOT fill, each with a one-line idea (use the Japanese layer names 個人/社会・国家/世界/将来世代 and domain names 経済/健康/制度/技術/環境/公平/倫理).
 - filterReview: are the three finalists really the strongest picks? Was the three-criteria self-check honest?
 - mechCorrections: for each finalist whose mechanism draft has English errors or is weak, give a corrected one-sentence version (index = finalist number 1-3; skip good ones).
@@ -464,6 +464,7 @@ function sanitizeDrillWorksheet(body) {
     .map(c => ({
       layer: s(c && c.layer, 20), domain: s(c && c.domain, 20),
       side: c && c.side === 'disagree' ? 'disagree' : 'agree', note: s(c && c.note, 200),
+      change: s(c && c.change, 120),
     })).filter(c => c.note && c.layer && c.domain);
   const finalists = (Array.isArray(body.finalists) ? body.finalists : []).slice(0, 3)
     .map(f => ({
