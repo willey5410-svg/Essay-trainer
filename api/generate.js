@@ -164,6 +164,33 @@ function normalizeDrillReview(raw) {
   };
 }
 
+/* ドリル Stage 1 の増減リストが出せない学習者のために、Gemini に叩き台を作らせるプロンプト */
+function buildDrillChangesPrompt(topic) {
+  return `You are a coach for the EIKEN Grade 1 essay brainstorming stage.
+A learner is doing a "matrix scan" drill and is stuck at Step 1: converting the topic into a NEUTRAL inventory of what would INCREASE and what would DECREASE if the proposition were realized/true. This is NOT a list of opinions — it is neutral raw material that perspectives will later be scanned from.
+
+TOPIC: ${topic}
+
+Produce 6 items, a mix of increases and decreases (aim for roughly 3 each). Each item MUST:
+- be a NEUTRAL description of WHAT changes, with no value judgment (write "the amount of judgment delegated to AI", NOT "AI harms workers")
+- be concrete enough to later scan against affected layers (individuals / society / world / future generations) and value domains (economy / health / institutions / technology / environment / fairness / ethics)
+- be written IN JAPANESE, as one short phrase
+- collectively span diverse domains and BOTH directions, so the later scan has material favoring either stance
+
+Return ONLY this JSON:
+{"changes":[{"dir":"inc","text":"..."},{"dir":"dec","text":"..."}]}
+("dir" is "inc" for an increase, "dec" for a decrease)`;
+}
+
+function normalizeDrillChanges(raw) {
+  if (!raw || !Array.isArray(raw.changes)) return null;
+  const changes = raw.changes.slice(0, 6).map(c => ({
+    dir: c && c.dir === 'dec' ? 'dec' : 'inc',
+    text: String((c && c.text) || '').trim().slice(0, 120),
+  })).filter(c => c.text);
+  return changes.length ? changes : null;
+}
+
 function buildThemePrompt(existingTopics) {
   return `You are an expert on the EIKEN Grade 1 English essay test.
 Propose 6 NEW essay topics in the style of real EIKEN Grade 1 prompts (agree/disagree statements or yes/no policy questions).
@@ -383,6 +410,20 @@ module.exports = async (req, res) => {
         return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
       return res.status(200).json({ bodies });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'drillChanges') {
+    if (typeof topic !== 'string' || !topic.trim()) {
+      return res.status(400).json({ error: 'topic が不正です' });
+    }
+    try {
+      const raw = await callGemini(buildDrillChangesPrompt(topic.trim().slice(0, 300)), apiKey, model, 0.5);
+      const changes = normalizeDrillChanges(raw);
+      if (!changes) return res.status(502).json({ error: '増減リストの生成に失敗しました' });
+      return res.status(200).json({ changes });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

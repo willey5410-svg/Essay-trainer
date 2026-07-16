@@ -74,6 +74,15 @@ async function evaluateEssaySet(set) {
   return data.evaluation;
 }
 
+/* ドリル Stage 1 の増減リストを Gemini に作ってもらう */
+async function generateDrillChanges(topic) {
+  const data = await apiCall({ mode: 'drillChanges', topic });
+  if (!data || !Array.isArray(data.changes) || !data.changes.length) throw new Error('増減リストの生成に失敗しました');
+  return data.changes
+    .map(c => ({ dir: c.dir === 'dec' ? 'dec' : 'inc', text: String(c.text || '').trim() }))
+    .filter(c => c.text);
+}
+
 /* 観点だしドリル（マトリクス走査）のワークシートを講評してもらう */
 async function reviewDrillWorksheet(payload) {
   const data = await apiCall(Object.assign({ mode: 'reviewDrill' }, payload));

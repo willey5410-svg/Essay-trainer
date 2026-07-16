@@ -402,9 +402,23 @@ function viewStudy() {
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
     </div>
+    ${argSummaryCard(set)}
     <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。色付き部分は<strong>タップで編集</strong>でき、保存すると再採点されます。</p>
     ${evalSection(set)}
     ${bodiesHtml}`;
+}
+
+/* 各 Body の観点（argument）を役割ごとに一覧表示する */
+function argSummaryCard(set) {
+  const items = set.bodies.map((b, i) => {
+    const role = BODY_ROLES[i] || BODY_ROLES[0];
+    return `<li><span class="arg-role">${role.name}</span> <span class="badge src">${esc(role.type)}</span>
+      <div class="arg-text">${esc(b.argument || '（観点未設定）')}</div></li>`;
+  }).join('');
+  return `<div class="card arg-summary">
+    <h3>🧭 この構成の3観点</h3>
+    <ol class="arg-list">${items}</ol>
+  </div>`;
 }
 
 /* 採点カード：採点済み／採点中／未採点（採点ボタン表示）の3状態 */
@@ -613,7 +627,7 @@ function startDrill(theme) {
     finalists: [], details: {},
     casting: [0, 1, 2], // Body i に割り当てる finalists 配列上の添字
     concession: '',
-    review: null, busy: false, error: null,
+    review: null, busy: false, error: null, fillingChanges: false,
     fromHistory: false,
     deadline: Date.now() + DRILL_TOTAL_SECONDS * 1000,
     timerId: null,
@@ -684,11 +698,48 @@ function drillStage1(d) {
   </div>`).join('');
   return `<div class="card">
     <h3>Stage 1: 増減リスト</h3>
-    <p class="hint-text">主張のままだと観点は出ません。まずテーマを「<strong>何が増え、何が減るか</strong>」の中立な変化に変換します（3〜6件）。</p>
+    <p class="hint-text">主張のままだと観点は出ません。まずテーマを「<strong>何が増え、何が減るか</strong>」の中立な変化に変換します（3〜6件）。思いつかないときは Gemini に叩き台を作らせて構いません。</p>
     ${rows}
-    ${d.changes.length < 6 ? '<button class="btn small ghost" data-action="drill-add-change">＋ 行を追加</button>' : ''}
+    <div class="row">
+      ${d.changes.length < 6 ? '<button class="btn small ghost" data-action="drill-add-change">＋ 行を追加</button>' : ''}
+      <button class="btn small ghost" data-action="drill-fill-changes" ${d.fillingChanges ? 'disabled' : ''}>${d.fillingChanges ? '🤖 Gemini が作成中…' : '🤖 増減リストをGeminiに埋めてもらう'}</button>
+    </div>
     <div class="row"><button class="btn" data-action="drill-to-2">次へ（マトリクス走査）</button></div>
   </div>`;
+}
+
+/* Stage 1 の増減リストを Gemini に埋めてもらう（既存の入力は残し、空きを埋める） */
+async function doFillDrillChanges() {
+  const d = state.drill;
+  if (!d || d.fillingChanges) return;
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '増減リストの生成には合言葉の入力が必要です';
+    render();
+    return;
+  }
+  d.fillingChanges = true;
+  d.error = null;
+  render();
+  try {
+    const gen = await generateDrillChanges(d.topic);
+    // 入力済みの行は保持し、Gemini の項目のうち重複しないものを追加（最大6件）
+    const existing = d.changes.filter(c => c.text.trim());
+    const seen = new Set(existing.map(c => c.text.trim()));
+    const additions = gen.filter(c => !seen.has(c.text.trim()));
+    d.changes = existing.concat(additions).slice(0, 6);
+    if (!d.changes.length) d.changes = gen.slice(0, 6);
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      d.error = '増減リストの生成に失敗しました：' + e.message;
+    }
+  }
+  d.fillingChanges = false;
+  render();
 }
 
 /* Stage 2: 4層×7ドメインのグリッドを走査して候補を出す */
@@ -1386,6 +1437,7 @@ $app.addEventListener('click', (ev) => {
     startDrill({ topic: d.topic, topicJa: d.topicJa });
   }
   else if (a === 'drill-add-change') { state.drill.changes.push({ dir: 'inc', text: '' }); render(); }
+  else if (a === 'drill-fill-changes') { doFillDrillChanges(); }
   else if (a === 'drill-del-change') { state.drill.changes.splice(Number(el.dataset.i), 1); render(); }
   else if (a === 'drill-toggle-change') {
     const c = state.drill.changes[Number(el.dataset.i)];
