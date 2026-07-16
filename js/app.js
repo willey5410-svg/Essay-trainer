@@ -5,6 +5,7 @@ const LS = {
   sets: 'et.sets',
   progress: 'et.progress',
   themes: 'et.customThemes',
+  drills: 'et.drills', // 観点だしドリル（マトリクス走査）の記録
   hiddenThemes: 'et.hiddenThemes', // 非表示にしたプリセットテーマの topic 一覧
   seeded: 'et.seeded.v5', // サンプル内容を更新したらバージョンを上げて再シードする
   dirty: 'et.cloudDirty', // クラウド未送信の変更がある印
@@ -20,8 +21,10 @@ function applyTheme() {
 }
 
 let state = {
-  view: 'home',        // home | study | loading
-  modal: null,         // settings | stance | keyword | null
+  view: 'home',        // home | study | drill | loading
+  modal: null,         // settings | stance | keyword | drillCell | null
+  drill: null,         // 観点だしドリルの進行状態（viewDrill 参照）
+  cellDraft: null,     // {layer, domain, note, side} セル編集モーダルの下書き
   keywordError: null,
   busyKeyword: false,
   pendingTheme: null,
@@ -78,6 +81,8 @@ function getProgress() { return readJSON(LS.progress, {}); }
 function saveProgress(p) { localStorage.setItem(LS.progress, JSON.stringify(p)); cloudMarkDirty(); }
 function getCustomThemes() { return readJSON(LS.themes, []); }
 function saveCustomThemes(t) { localStorage.setItem(LS.themes, JSON.stringify(t)); cloudMarkDirty(); }
+function getDrills() { return readJSON(LS.drills, []); }
+function saveDrills(d) { localStorage.setItem(LS.drills, JSON.stringify(d.slice(0, 30))); cloudMarkDirty(); }
 function getHiddenThemes() { return readJSON(LS.hiddenThemes, []); }
 function saveHiddenThemes(t) { localStorage.setItem(LS.hiddenThemes, JSON.stringify(t)); cloudMarkDirty(); }
 
@@ -93,6 +98,7 @@ function cloudPayload() {
     progress: getProgress(),
     customThemes: getCustomThemes(),
     hiddenThemes: getHiddenThemes(),
+    drills: getDrills(),
     savedAt: Date.now(),
   };
 }
@@ -149,6 +155,7 @@ function applyCloudData(d) {
   if (d.progress && typeof d.progress === 'object') localStorage.setItem(LS.progress, JSON.stringify(d.progress));
   if (Array.isArray(d.customThemes)) localStorage.setItem(LS.themes, JSON.stringify(d.customThemes));
   if (Array.isArray(d.hiddenThemes)) localStorage.setItem(LS.hiddenThemes, JSON.stringify(d.hiddenThemes));
+  if (Array.isArray(d.drills)) localStorage.setItem(LS.drills, JSON.stringify(d.drills));
   localStorage.setItem(LS.seeded, '1');
 }
 
@@ -257,12 +264,14 @@ function render() {
   let html = '';
   if (state.view === 'home') html = viewHome();
   else if (state.view === 'study') html = viewStudy();
+  else if (state.view === 'drill') html = viewDrill();
   else if (state.view === 'loading') html = viewLoading();
   if (state.modal === 'settings') html += modalSettings();
   if (state.modal === 'stance') html += modalStance();
   if (state.modal === 'keyword') html += modalKeyword();
   if (state.modal === 'themeAdd') html += modalThemeAdd();
   if (state.modal === 'bodyEdit') html += modalBodyEdit();
+  if (state.modal === 'drillCell') html += modalDrillCell();
   if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
 }
@@ -330,6 +339,15 @@ function viewHome() {
     <section>
       <h2>📚 学習中のエッセイ</h2>
       ${setItems}
+    </section>
+    <section>
+      <h2>🧠 観点だしドリル（マトリクス走査）</h2>
+      <div class="card">
+        <p class="hint-text">「増減リスト → 4層×7ドメイン走査 → 3基準フィルタ → 配役」を5分で回す反復練習です。立場は走査の結果から決めます。</p>
+        <select id="drillThemeSel">${visibleThemes().map((t, i) => `<option value="${i}">${esc(t.topic)}</option>`).join('')}</select>
+        <div class="row"><button class="btn" data-action="drill-start">▶ ドリルを開始</button></div>
+      </div>
+      ${drillHistoryHtml()}
     </section>
     <section>
       <h2>✨ 新しいテーマを選ぶ</h2>
@@ -575,6 +593,428 @@ function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
 }
 
+/* ---------- 観点だしドリル（マトリクス走査） ----------
+   増減リスト → 4層×7ドメイン走査 → 立場決定＋3基準フィルタ → 配役 → Gemini講評。
+   立場は入力ではなく「観点数が多い側」として走査から導く。講評はGemini呼び出し1回。 */
+
+function drillCand(id) { return state.drill.candidates.find(c => c.id === id); }
+
+function fmtClock(sec) {
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
+
+function startDrill(theme) {
+  state.drill = {
+    stage: 1,
+    topic: theme.topic, topicJa: theme.topicJa || '',
+    changes: [{ dir: 'inc', text: '' }, { dir: 'dec', text: '' }, { dir: 'inc', text: '' }],
+    candidates: [],
+    stance: null,
+    finalists: [], details: {},
+    casting: [0, 1, 2], // Body i に割り当てる finalists 配列上の添字
+    concession: '',
+    review: null, busy: false, error: null,
+    fromHistory: false,
+    deadline: Date.now() + DRILL_TOTAL_SECONDS * 1000,
+    timerId: null,
+  };
+  state.view = 'drill';
+  state.error = null;
+  render();
+  startDrillTimer();
+}
+
+function startDrillTimer() {
+  stopDrillTimer();
+  state.drill.timerId = setInterval(() => {
+    const el = document.getElementById('drillTimer');
+    if (!el || state.view !== 'drill' || !state.drill) { stopDrillTimer(); return; }
+    const left = Math.ceil((state.drill.deadline - Date.now()) / 1000);
+    if (left > 0) {
+      el.textContent = fmtClock(left);
+    } else {
+      el.textContent = '⏰ 時間切れ';
+      el.classList.add('over');
+      stopDrillTimer();
+    }
+  }, 250);
+}
+
+function stopDrillTimer() {
+  if (state.drill && state.drill.timerId) { clearInterval(state.drill.timerId); state.drill.timerId = null; }
+}
+
+function drillStageBar(stage) {
+  const names = ['増減', '走査', 'フィルタ', '配役', '講評'];
+  return `<div class="drill-stages">${names.map((n, i) =>
+    `<span class="drill-stage${i + 1 === stage ? ' cur' : ''}${i + 1 < stage ? ' done' : ''}">${i + 1} ${n}</span>`).join('<span class="drill-arrow">→</span>')}</div>`;
+}
+
+function viewDrill() {
+  const d = state.drill;
+  if (!d) { state.view = 'home'; return viewHome(); }
+  const guide = DRILL_STAGE_GUIDE[d.stage];
+  let stageHtml = '';
+  if (d.stage === 1) stageHtml = drillStage1(d);
+  else if (d.stage === 2) stageHtml = drillStage2(d);
+  else if (d.stage === 3) stageHtml = drillStage3(d);
+  else if (d.stage === 4) stageHtml = drillStage4(d);
+  else stageHtml = drillStage5(d);
+  return `<header class="topbar">
+      <button class="btn ghost" data-action="drill-quit">← 中止</button>
+      <span class="topbar-title">🧠 観点だしドリル</span>
+      <span id="drillTimer" class="drill-timer">${fmtClock(Math.max(0, Math.ceil((d.deadline - Date.now()) / 1000)))}</span>
+    </header>
+    ${banner()}
+    <div class="topic-head">
+      <h2>${esc(d.topic)}</h2>
+      <p class="set-sub">${esc(d.topicJa)}${guide ? ` <span class="stat">このステージの目安 ${fmtClock(guide)}</span>` : ''}</p>
+    </div>
+    ${drillStageBar(d.stage)}
+    ${d.error ? `<p class="field-error">${esc(d.error)}</p>` : ''}
+    ${stageHtml}`;
+}
+
+/* Stage 1: トピックを「何が増え、何が減るか」の中立な増減リストに変換する */
+function drillStage1(d) {
+  const rows = d.changes.map((c, i) => `<div class="drill-ch-row">
+    <button class="btn small ${c.dir === 'inc' ? '' : 'ghost'}" data-action="drill-toggle-change" data-i="${i}">${c.dir === 'inc' ? '📈 増' : '📉 減'}</button>
+    <input type="text" class="dr-ch" data-i="${i}" value="${esc(c.text)}" placeholder="例：${c.dir === 'inc' ? 'AIに任せる判断が増える' : '人間が判断する場面が減る'}">
+    ${d.changes.length > 2 ? `<button class="theme-del" data-action="drill-del-change" data-i="${i}">×</button>` : ''}
+  </div>`).join('');
+  return `<div class="card">
+    <h3>Stage 1: 増減リスト</h3>
+    <p class="hint-text">主張のままだと観点は出ません。まずテーマを「<strong>何が増え、何が減るか</strong>」の中立な変化に変換します（3〜6件）。</p>
+    ${rows}
+    ${d.changes.length < 6 ? '<button class="btn small ghost" data-action="drill-add-change">＋ 行を追加</button>' : ''}
+    <div class="row"><button class="btn" data-action="drill-to-2">次へ（マトリクス走査）</button></div>
+  </div>`;
+}
+
+/* Stage 2: 4層×7ドメインのグリッドを走査して候補を出す */
+function drillStage2(d) {
+  const filled = d.candidates.length;
+  const grid = `<table class="dg-table"><thead><tr><th></th>${DRILL_LAYERS.map(l => `<th>${esc(l.ja)}</th>`).join('')}</tr></thead>
+    <tbody>${DRILL_DOMAINS.map((dom, di) => `<tr><th>${esc(dom.ja)}</th>${DRILL_LAYERS.map((l, li) => {
+      const c = d.candidates.find(x => x.layer === li && x.domain === di);
+      const mark = c ? (c.side === 'agree' ? '<span class="dg-plus">＋</span>' : '<span class="dg-minus">−</span>') : '<span class="dg-dot">·</span>';
+      return `<td><button class="dg-cell${c ? ' filled' : ''}" data-action="drill-cell" data-layer="${li}" data-domain="${di}" title="${esc(l.ja)} × ${esc(dom.ja)}">${mark}</button></td>`;
+    }).join('')}</tr>`).join('')}</tbody></table>`;
+  const chSummary = d.changes.filter(c => c.text.trim()).map(c => `${c.dir === 'inc' ? '📈' : '📉'}${esc(c.text)}`).join('　');
+  return `<div class="card">
+    <h3>Stage 2: マトリクス走査 <span class="stat">候補 ${filled} / 5個以上</span></h3>
+    <p class="hint-text">セルをタップし「この層のこのドメインにプラスかマイナスか」を機械的に問います。思いつきを待たず、走査で生成します。<strong>両側（賛成に利する／反対に利する）を出す</strong>のがコツです。</p>
+    <p class="drill-ch-summary">${chSummary}</p>
+    <div class="dg-wrap">${grid}</div>
+    <div class="row">
+      <button class="btn" data-action="drill-to-3" ${filled < 5 ? 'disabled' : ''}>次へ（フィルタ）</button>
+      <button class="btn ghost" data-action="drill-back" data-stage="1">← 戻る</button>
+    </div>
+  </div>`;
+}
+
+/* Stage 3: 立場決定（観点数が多い側）＋3基準フィルタで3つに絞る */
+function drillStage3(d) {
+  const nAgree = d.candidates.filter(c => c.side === 'agree').length;
+  const nDis = d.candidates.filter(c => c.side === 'disagree').length;
+  if (!d.stance) d.stance = nDis > nAgree ? 'disagree' : 'agree';
+  const side = d.candidates.filter(c => c.side === d.stance);
+  const items = side.map(c => {
+    const on = d.finalists.includes(c.id);
+    const det = d.details[c.id] || {};
+    return `<div class="card drill-cand${on ? ' picked' : ''}">
+      <label class="drill-cand-head">
+        <input type="checkbox" data-action="drill-finalist" data-id="${esc(c.id)}" ${on ? 'checked' : ''}>
+        <span class="badge src">${esc(DRILL_LAYERS[c.layer].ja)} × ${esc(DRILL_DOMAINS[c.domain].ja)}</span> ${esc(c.note)}
+      </label>
+      ${on ? `<div class="drill-checks">
+        <label>① メカニズム：「As X…, Y also grows」の連動を英語1文で</label>
+        <input type="text" class="dr-fd" data-cid="${esc(c.id)}" data-f="mech" value="${esc(det.mech || '')}" placeholder="As AI takes over routine tasks, demand for retraining also grows.">
+        <label>② 実例：China / India 級の実在例（単語で）</label>
+        <input type="text" class="dr-fd" data-cid="${esc(c.id)}" data-f="example" value="${esc(det.example || '')}" placeholder="China, developing countries">
+        <label>③ 語彙：この観点を支える英単語（2〜3語）</label>
+        <input type="text" class="dr-fd" data-cid="${esc(c.id)}" data-f="vocab" value="${esc(det.vocab || '')}" placeholder="automation, displacement, retraining">
+      </div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="card">
+    <h3>Stage 3: 立場決定＋3基準フィルタ <span class="stat">選択 ${d.finalists.length} / 3</span></h3>
+    <p class="hint-text">走査結果：賛成側に利する観点 <strong>${nAgree}</strong> ／ 反対側 <strong>${nDis}</strong>。立場は信念ではなく<strong>観点数が多い側</strong>で決めます。</p>
+    <div class="seg">
+      <button class="seg-btn${d.stance === 'agree' ? ' active' : ''}" data-action="drill-stance" data-stance="agree">賛成で書く（${nAgree}個）</button>
+      <button class="seg-btn${d.stance === 'disagree' ? ' active' : ''}" data-action="drill-stance" data-stance="disagree">反対で書く（${nDis}個）</button>
+    </div>
+    <p class="hint-text">3基準（①メカニズム ②実例 ③語彙 — <strong>語彙が無い観点は本番では存在しないのと同じ</strong>）を自己チェックして3つ選択。<strong>層もドメインも互いに別のマス</strong>から選ぶこと。</p>
+  </div>
+  ${items || '<p class="empty">この側の候補がありません。走査に戻って追加してください。</p>'}
+  <div class="row">
+    <button class="btn" data-action="drill-to-4">次へ（配役）</button>
+    <button class="btn ghost" data-action="drill-back" data-stage="2">← 走査に戻る</button>
+  </div>`;
+}
+
+/* Stage 4: Body 1/2/3 への配役と譲歩素材の選択 */
+function drillStage4(d) {
+  const roles = ['Body 1（因果必然型）— メカニズムが固い観点', 'Body 2（実証型）— 実例が鮮明な観点', 'Body 3（譲歩反駁型）— 反論が見えやすい観点'];
+  const rows = roles.map((r, bi) => `<label class="drill-cast-label">${r}</label>
+    <select class="dr-cast" data-bi="${bi}">
+      ${d.finalists.map((id, fi) => {
+        const c = drillCand(id);
+        return `<option value="${fi}"${d.casting[bi] === fi ? ' selected' : ''}>${esc(c.note)}（${esc(DRILL_LAYERS[c.layer].ja)}×${esc(DRILL_DOMAINS[c.domain].ja)}）</option>`;
+      }).join('')}
+    </select>`).join('');
+  const discarded = d.candidates.filter(c => c.side !== d.stance);
+  const concSel = `<label class="drill-cast-label">譲歩素材（捨てた側から1つ — Body 3 の「It is true that…」に回収）</label>
+    <select id="drillConcession">
+      <option value="">（選ばない）</option>
+      ${discarded.map(c => `<option value="${esc(c.id)}"${d.concession === c.id ? ' selected' : ''}>${esc(c.note)}（${esc(DRILL_LAYERS[c.layer].ja)}×${esc(DRILL_DOMAINS[c.domain].ja)}）</option>`).join('')}
+    </select>`;
+  return `<div class="card">
+    <h3>Stage 4: 配役</h3>
+    <p class="hint-text">3観点をそれぞれ得意な役に割り当てます（重複不可）。</p>
+    ${rows}
+    ${discarded.length ? concSel : '<p class="hint-text">捨てた側の候補が無いため、譲歩素材はGeminiに任せます。</p>'}
+    <div class="row">
+      <button class="btn" data-action="drill-judge" ${d.busy ? 'disabled' : ''}>${d.busy ? 'Gemini が講評中…' : '📋 判定する（Gemini講評）'}</button>
+      <button class="btn ghost" data-action="drill-back" data-stage="3">← フィルタに戻る</button>
+    </div>
+  </div>`;
+}
+
+/* Stage 5: Gemini講評の表示（履歴からの閲覧もこの画面） */
+function drillStage5(d) {
+  if (d.busy) return '<div class="loading"><div class="spinner"></div><p>Gemini がワークシートを講評中…</p></div>';
+  const r = d.review;
+  if (!r) return '<p class="empty">講評がありません。</p>';
+  // 直後表示は candidate ID 参照、履歴閲覧（fromHistory）は保存済みの詳細オブジェクト。両対応に正規化する。
+  const fs = d.fromHistory
+    ? d.finalists.map(f => ({ layerJa: f.layer, domainJa: f.domain, note: f.note, mech: f.mech || '' }))
+    : d.finalists.map(id => {
+        const c = drillCand(id);
+        const det = d.details[id] || {};
+        return { layerJa: DRILL_LAYERS[c.layer].ja, domainJa: DRILL_DOMAINS[c.domain].ja, note: c.note, mech: det.mech || '' };
+      });
+  const ws = fs.map((f, fi) => {
+    const bi = d.casting.indexOf(fi);
+    return `<li><strong>${['因果必然', '実証', '譲歩反駁'][bi] || '?'}型</strong>：${esc(f.note)}
+      <span class="badge src">${esc(f.layerJa)}×${esc(f.domainJa)}</span>
+      ${f.mech ? `<div class="verdict-comment">🔗 ${esc(f.mech)}</div>` : ''}</li>`;
+  }).join('');
+  const missed = (r.missedCells || []).map(m => `<li><span class="badge src">${esc(m.layer)}×${esc(m.domain)}</span> ${esc(m.idea)}</li>`).join('');
+  const mech = (r.mechCorrections || []).map(m => `<li>観点${m.index}：<span class="free">${esc(m.corrected)}</span>${m.comment ? `<div class="verdict-comment">${esc(m.comment)}</div>` : ''}</li>`).join('');
+  const picks = (r.modelPicks || []).map(p => `<li><strong>${esc(p.role)}</strong>：${esc(p.argument)} <span class="badge src">${esc(p.layer)}×${esc(p.domain)}</span></li>`).join('');
+  return `<div class="card eval-card">
+      <h3>📋 総評</h3><p class="drill-review-text">${esc(r.overall)}</p>
+    </div>
+    <div class="card">
+      <h3>あなたのワークシート（${d.stance === 'agree' ? '賛成' : '反対'}で立論）</h3><ol class="drill-review-list">${ws}</ol>
+    </div>
+    <div class="card">
+      <h3>講評の詳細</h3>
+      <ul class="drill-review-list">
+        ${r.changesReview ? `<li><strong>増減リスト：</strong>${esc(r.changesReview)}</li>` : ''}
+        ${r.scanReview ? `<li><strong>走査：</strong>${esc(r.scanReview)}</li>` : ''}
+        ${r.filterReview ? `<li><strong>フィルタ：</strong>${esc(r.filterReview)}</li>` : ''}
+        ${r.castingReview ? `<li><strong>配役・譲歩：</strong>${esc(r.castingReview)}</li>` : ''}
+      </ul>
+      ${missed ? `<h3>見落としていた有望セル</h3><ul class="drill-review-list">${missed}</ul>` : ''}
+      ${mech ? `<h3>メカニズム文の添削</h3><ul class="drill-review-list">${mech}</ul>` : ''}
+      ${picks ? `<h3>Gemini の模範ピック</h3><ul class="drill-review-list">${picks}</ul>` : ''}
+    </div>
+    <div class="row">
+      <button class="btn" data-action="drill-essay">📝 このワークシートでエッセイを生成</button>
+      <button class="btn ghost" data-action="drill-restart">🔁 同じテーマでもう一度</button>
+      <button class="btn ghost" data-action="drill-quit">ホームへ</button>
+    </div>`;
+}
+
+/* セル編集モーダル：層×ドメインの交点に観点を一言＋賛否どちらに利するかで記録 */
+function modalDrillCell() {
+  const cd = state.cellDraft;
+  if (!cd) return '';
+  const existing = state.drill && state.drill.candidates.find(c => c.layer === cd.layer && c.domain === cd.domain);
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>${esc(DRILL_LAYERS[cd.layer].ja)} × ${esc(DRILL_DOMAINS[cd.domain].ja)}</h3>
+      <p class="hint-text">この層のこのドメインで<strong>何が起きるか</strong>を一言で（中立に・構造で・一段抽象化して）。</p>
+      <input type="text" id="dcNote" value="${esc(cd.note)}" placeholder="例：再教育の需要が拡大する">
+      <label>この観点はどちらの立場に利するか</label>
+      <div class="seg">
+        <button class="seg-btn${cd.side === 'agree' ? ' active' : ''}" data-action="drill-cell-side" data-side="agree">賛成に利する ＋</button>
+        <button class="seg-btn${cd.side === 'disagree' ? ' active' : ''}" data-action="drill-cell-side" data-side="disagree">反対に利する −</button>
+      </div>
+      <div class="row">
+        <button class="btn" data-action="drill-cell-save">保存</button>
+        ${existing ? '<button class="btn ghost" data-action="drill-cell-del">この観点を削除</button>' : ''}
+        <button class="btn ghost" data-action="close-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ステージ遷移の検証 */
+function drillGoStage2() {
+  const d = state.drill;
+  d.changes = d.changes.map(c => ({ dir: c.dir, text: c.text.trim() }));
+  if (d.changes.filter(c => c.text).length < 3) {
+    d.error = '増減リストを3件以上入力してください（空行は無視されます）';
+  } else {
+    d.error = null;
+    d.stage = 2;
+  }
+  render();
+}
+
+function drillGoStage4() {
+  const d = state.drill;
+  if (d.finalists.length !== 3) { d.error = '観点を3つ選んでください'; render(); return; }
+  const cands = d.finalists.map(drillCand);
+  const layers = new Set(cands.map(c => c.layer));
+  const domains = new Set(cands.map(c => c.domain));
+  if (layers.size < 3 || domains.size < 3) {
+    d.error = '重複を構造的に防ぐため、3つの観点は層もドメインも互いに別のマスから選んでください';
+    render();
+    return;
+  }
+  for (const id of d.finalists) {
+    const det = d.details[id] || {};
+    if (!String(det.mech || '').trim() || !String(det.example || '').trim() || !String(det.vocab || '').trim()) {
+      d.error = '選んだ3観点すべてに ①メカニズム文 ②実例 ③語彙 を記入してください（3基準フィルタ）';
+      render();
+      return;
+    }
+  }
+  d.error = null;
+  d.casting = [0, 1, 2];
+  d.stage = 4;
+  render();
+}
+
+/* Gemini講評（1コール）→ 記録を保存して Stage 5 へ */
+async function doDrillJudge() {
+  const d = state.drill;
+  if (!d || d.busy) return;
+  const seen = new Set(d.casting);
+  if (seen.size !== 3) { d.error = '配役が重複しています。3観点を別々の Body に割り当ててください'; render(); return; }
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '講評には合言葉の入力が必要です';
+    render();
+    return;
+  }
+  stopDrillTimer();
+  d.busy = true;
+  d.error = null;
+  d.stage = 5;
+  render();
+  const finalists = d.finalists.map(id => {
+    const c = drillCand(id);
+    const det = d.details[id] || {};
+    return {
+      layer: DRILL_LAYERS[c.layer].ja, domain: DRILL_DOMAINS[c.domain].ja,
+      note: c.note, mech: det.mech || '', example: det.example || '', vocab: det.vocab || '',
+    };
+  });
+  const concessionNote = d.concession ? (drillCand(d.concession) || {}).note || '' : '';
+  try {
+    const review = await reviewDrillWorksheet({
+      topic: d.topic,
+      stance: d.stance,
+      changes: d.changes.filter(c => c.text),
+      candidates: d.candidates.map(c => ({
+        layer: DRILL_LAYERS[c.layer].ja, domain: DRILL_DOMAINS[c.domain].ja, side: c.side, note: c.note,
+      })),
+      finalists,
+      casting: d.casting,
+      concession: concessionNote,
+    });
+    d.review = review;
+    // 記録を保存（履歴から再閲覧・エッセイ生成できる形で自己完結させる）
+    const drills = getDrills();
+    drills.unshift({
+      id: 'drill-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      topic: d.topic, topicJa: d.topicJa, createdAt: Date.now(),
+      stance: d.stance,
+      changes: d.changes.filter(c => c.text),
+      candidates: d.candidates,
+      finalists, casting: d.casting.slice(), concession: concessionNote,
+      review,
+    });
+    saveDrills(drills);
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+      d.stage = 4;
+    } else {
+      d.error = '講評に失敗しました：' + e.message;
+      d.stage = 4;
+    }
+  }
+  d.busy = false;
+  render();
+}
+
+/* ドリル記録（保存形式）からワークシートを組み立ててエッセイ生成へ */
+function drillWorksheetFromFinalists(finalists, casting, concession) {
+  return {
+    points: [0, 1, 2].map(bi => {
+      const f = finalists[casting[bi]];
+      return { layer: f.layer, domain: f.domain, idea: f.note, mech: f.mech, example: f.example, vocab: f.vocab };
+    }),
+    concession: concession || '',
+  };
+}
+
+function doDrillEssay() {
+  const d = state.drill;
+  if (!d || !d.review) return;
+  const finalists = d.fromHistory ? d.finalists : d.finalists.map(id => {
+    const c = drillCand(id);
+    const det = d.details[id] || {};
+    return { layer: DRILL_LAYERS[c.layer].ja, domain: DRILL_DOMAINS[c.domain].ja, note: c.note, mech: det.mech || '', example: det.example || '', vocab: det.vocab || '' };
+  });
+  const concessionNote = d.fromHistory ? d.concession : (d.concession ? (drillCand(d.concession) || {}).note || '' : '');
+  const worksheet = drillWorksheetFromFinalists(finalists, d.casting, concessionNote);
+  const theme = { topic: d.topic, topicJa: d.topicJa };
+  const stance = d.stance;
+  stopDrillTimer();
+  state.drill = null;
+  doGenerateEssay(theme, stance, worksheet);
+}
+
+/* 講評済みドリル記録を履歴から Stage 5 表示用に読み込む */
+function openDrillRecord(id) {
+  const rec = getDrills().find(x => x.id === id);
+  if (!rec) return;
+  state.drill = {
+    stage: 5,
+    topic: rec.topic, topicJa: rec.topicJa,
+    changes: rec.changes, candidates: rec.candidates || [],
+    stance: rec.stance,
+    // 履歴では finalists を保存済みの詳細オブジェクトのまま持つ（fromHistory=true が目印）
+    finalists: rec.finalists, details: {}, casting: rec.casting, concession: rec.concession,
+    review: rec.review, busy: false, error: null,
+    fromHistory: true, deadline: Date.now(), timerId: null,
+  };
+  state.view = 'drill';
+  render();
+}
+
+function drillHistoryHtml() {
+  const drills = getDrills();
+  if (!drills.length) return '';
+  const items = drills.slice(0, 5).map(r => `<div class="theme-item">
+    <button class="theme-pick" data-action="drill-open" data-id="${esc(r.id)}">
+      <span class="theme-en">${esc(r.topic)}</span>
+      <span class="theme-ja">${new Date(r.createdAt).toLocaleString()} ・ ${r.stance === 'agree' ? '賛成' : '反対'}で立論</span>
+    </button>
+    <button class="theme-del" data-action="drill-delete" data-id="${esc(r.id)}" title="この記録を削除">×</button>
+  </div>`).join('');
+  return `<h3 class="drill-history-h">最近のドリル記録</h3>${items}`;
+}
+
 /* ---------- 採点・論点判定についてGeminiと会話する ---------- */
 
 function modalChat() {
@@ -750,7 +1190,7 @@ function regenerateEssay(setId) {
   doGenerateEssay({ topic: set.topic, topicJa: set.topicJa }, set.stance);
 }
 
-async function doGenerateEssay(theme, stance) {
+async function doGenerateEssay(theme, stance, worksheet) {
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
     state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
@@ -759,10 +1199,12 @@ async function doGenerateEssay(theme, stance) {
   }
   state.modal = null;
   state.view = 'loading';
-  state.loadingText = 'Gemini が例文を生成中…（通常10〜20秒ほどです）';
+  state.loadingText = worksheet
+    ? 'あなたのワークシートを核に Gemini が例文を生成中…'
+    : 'Gemini が例文を生成中…（通常10〜20秒ほどです）';
   render();
   try {
-    const set = await generateEssaySet(theme, stance);
+    const set = await generateEssaySet(theme, stance, worksheet);
     const sets = getSets();
     sets.unshift(set);
     saveSetsList(sets);
@@ -845,7 +1287,7 @@ async function doSaveKeyword(from) {
 /* ---------- export / import ---------- */
 
 function exportData() {
-  const data = { sets: getSets(), progress: getProgress(), customThemes: getCustomThemes() };
+  const data = { sets: getSets(), progress: getProgress(), customThemes: getCustomThemes(), drills: getDrills() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -877,6 +1319,14 @@ function importData(file) {
         }
         saveCustomThemes(custom);
       }
+      if (Array.isArray(data.drills)) {
+        const drills = getDrills();
+        for (const r of data.drills) {
+          if (r && r.id && !drills.some(x => x.id === r.id)) drills.push(r);
+        }
+        drills.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        saveDrills(drills);
+      }
       state.notice = 'インポートが完了しました';
       state.error = null;
     } catch (e) {
@@ -900,8 +1350,95 @@ $app.addEventListener('click', (ev) => {
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
-    state.bodyEdit = null; state.chatError = null;
+    state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
     render();
+  }
+  /* ---- 観点だしドリル ---- */
+  else if (a === 'drill-start') {
+    const sel = document.getElementById('drillThemeSel');
+    const theme = visibleThemes()[Number(sel ? sel.value : 0)];
+    if (theme) startDrill(theme);
+  }
+  else if (a === 'drill-quit') {
+    if (state.drill && state.drill.stage < 5 && !confirm('ドリルを中止しますか？（入力内容は破棄されます）')) return;
+    stopDrillTimer();
+    state.drill = null;
+    state.view = 'home';
+    render();
+  }
+  else if (a === 'drill-restart') {
+    const d = state.drill;
+    stopDrillTimer();
+    startDrill({ topic: d.topic, topicJa: d.topicJa });
+  }
+  else if (a === 'drill-add-change') { state.drill.changes.push({ dir: 'inc', text: '' }); render(); }
+  else if (a === 'drill-del-change') { state.drill.changes.splice(Number(el.dataset.i), 1); render(); }
+  else if (a === 'drill-toggle-change') {
+    const c = state.drill.changes[Number(el.dataset.i)];
+    c.dir = c.dir === 'inc' ? 'dec' : 'inc';
+    render();
+  }
+  else if (a === 'drill-to-2') { drillGoStage2(); }
+  else if (a === 'drill-back') { state.drill.error = null; state.drill.stage = Number(el.dataset.stage); render(); }
+  else if (a === 'drill-cell') {
+    const layer = Number(el.dataset.layer), domain = Number(el.dataset.domain);
+    const c = state.drill.candidates.find(x => x.layer === layer && x.domain === domain);
+    state.cellDraft = { layer, domain, note: c ? c.note : '', side: c ? c.side : 'agree' };
+    state.modal = 'drillCell';
+    render();
+    const inp = document.getElementById('dcNote');
+    if (inp) inp.focus();
+  }
+  else if (a === 'drill-cell-side') { state.cellDraft.side = el.dataset.side; render(); }
+  else if (a === 'drill-cell-save') {
+    const cd = state.cellDraft;
+    const note = ((document.getElementById('dcNote') || {}).value || cd.note).trim();
+    if (!note) return;
+    const d = state.drill;
+    const id = `c${cd.layer}-${cd.domain}`;
+    const existing = d.candidates.find(x => x.id === id);
+    if (existing) { existing.note = note; existing.side = cd.side; }
+    else d.candidates.push({ id, layer: cd.layer, domain: cd.domain, note, side: cd.side });
+    state.modal = null;
+    state.cellDraft = null;
+    render();
+  }
+  else if (a === 'drill-cell-del') {
+    const cd = state.cellDraft;
+    const d = state.drill;
+    const id = `c${cd.layer}-${cd.domain}`;
+    d.candidates = d.candidates.filter(x => x.id !== id);
+    d.finalists = d.finalists.filter(x => x !== id);
+    state.modal = null;
+    state.cellDraft = null;
+    render();
+  }
+  else if (a === 'drill-to-3') { state.drill.error = null; state.drill.stage = 3; render(); }
+  else if (a === 'drill-stance') {
+    if (state.drill.stance !== el.dataset.stance) {
+      state.drill.stance = el.dataset.stance;
+      state.drill.finalists = []; // 立場が変わったら選択をやり直す
+    }
+    render();
+  }
+  else if (a === 'drill-finalist') {
+    const d = state.drill;
+    const id = el.dataset.id;
+    if (d.finalists.includes(id)) d.finalists = d.finalists.filter(x => x !== id);
+    else if (d.finalists.length < 3) d.finalists.push(id);
+    else { d.error = '選べるのは3つまでです。先にどれかのチェックを外してください'; render(); return; }
+    d.error = null;
+    render();
+  }
+  else if (a === 'drill-to-4') { drillGoStage4(); }
+  else if (a === 'drill-judge') { doDrillJudge(); }
+  else if (a === 'drill-essay') { doDrillEssay(); }
+  else if (a === 'drill-open') { openDrillRecord(el.dataset.id); }
+  else if (a === 'drill-delete') {
+    if (confirm('このドリル記録を削除しますか？')) {
+      saveDrills(getDrills().filter(x => x.id !== el.dataset.id));
+      render();
+    }
   }
   else if (a === 'open-body-edit') {
     const bi = Number(el.dataset.body);
@@ -1036,6 +1573,10 @@ $app.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.id === 'chatInput') {
     doChatSend();
   }
+  if (ev.key === 'Enter' && ev.target.id === 'dcNote') {
+    const btn = $app.querySelector('[data-action="drill-cell-save"]');
+    if (btn) btn.click();
+  }
 });
 
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
@@ -1043,6 +1584,27 @@ $app.addEventListener('input', (ev) => {
   if (ev.target.id === 'chatInput') state.chatDraft = ev.target.value;
   if (ev.target.classList.contains('free-input') && state.bodyEdit) {
     state.bodyEdit.vals[ev.target.id] = ev.target.value;
+  }
+  // ドリルの各入力を state に同期
+  if (ev.target.classList.contains('dr-ch') && state.drill) {
+    const c = state.drill.changes[Number(ev.target.dataset.i)];
+    if (c) c.text = ev.target.value;
+  }
+  if (ev.target.classList.contains('dr-fd') && state.drill) {
+    const cid = ev.target.dataset.cid;
+    state.drill.details[cid] = state.drill.details[cid] || {};
+    state.drill.details[cid][ev.target.dataset.f] = ev.target.value;
+  }
+  if (ev.target.id === 'dcNote' && state.cellDraft) state.cellDraft.note = ev.target.value;
+});
+
+// ドリルのセレクト（配役・譲歩素材）を state に同期
+$app.addEventListener('change', (ev) => {
+  if (ev.target.classList.contains('dr-cast') && state.drill) {
+    state.drill.casting[Number(ev.target.dataset.bi)] = Number(ev.target.value);
+  }
+  if (ev.target.id === 'drillConcession' && state.drill) {
+    state.drill.concession = ev.target.value;
   }
 });
 

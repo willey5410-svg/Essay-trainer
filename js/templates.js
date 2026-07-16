@@ -11,6 +11,28 @@ const BODY_ROLES = [
   { name: 'Body 3', type: '譲歩反駁型', functions: ['主張', '譲歩', '反駁', '決着'] },
 ];
 
+/* 観点だしドリル（マトリクス走査）の2軸。
+   横軸=影響を受ける層、縦軸=価値ドメイン。en はプロンプト用の英語名。 */
+const DRILL_LAYERS = [
+  { ja: '個人', en: 'individuals' },
+  { ja: '社会・国家', en: 'society and the nation' },
+  { ja: '世界', en: 'the world' },
+  { ja: '将来世代', en: 'future generations' },
+];
+const DRILL_DOMAINS = [
+  { ja: '経済', en: 'economy' },
+  { ja: '健康', en: 'health' },
+  { ja: '制度', en: 'institutions' },
+  { ja: '技術', en: 'technology' },
+  { ja: '環境', en: 'environment' },
+  { ja: '公平', en: 'fairness' },
+  { ja: '倫理', en: 'ethics' },
+];
+
+/* ドリル各ステージの目安時間（秒）。全体タイマーは5分。 */
+const DRILL_STAGE_GUIDE = { 1: 60, 2: 120, 3: 90, 4: 30 };
+const DRILL_TOTAL_SECONDS = 300;
+
 /* テンプレート由来の定型表現。学習画面でこれ以外（＝生成された内容部分）を色分け表示する。
    正規表現の選択肢は先頭から順に試されるため、長いフレーズを先に並べること。 */
 const TEMPLATE_PHRASES = [

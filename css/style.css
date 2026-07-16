@@ -283,6 +283,49 @@ section { margin-bottom: 8px; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .cloud-badge { font-size: 0.75rem; color: var(--sub); white-space: nowrap; }
 
+/* 観点だしドリル */
+.drill-timer { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.drill-timer.over { color: var(--red); }
+.drill-stages { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 12px; font-size: 0.78rem; }
+.drill-stage { border-radius: 999px; padding: 2px 10px; background: var(--bg); color: var(--sub); border: 1px solid var(--border); white-space: nowrap; }
+.drill-stage.cur { background: var(--accent); color: #fff; border-color: var(--accent); }
+.drill-stage.done { background: var(--green-soft); color: var(--green); border-color: var(--green); }
+.drill-arrow { color: var(--sub); }
+.drill-ch-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.drill-ch-row .btn { flex-shrink: 0; min-width: 4.4em; }
+.drill-ch-row input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; font-family: inherit; }
+.drill-ch-summary { font-size: 0.78rem; color: var(--sub); margin-bottom: 10px; }
+.dg-wrap { overflow-x: auto; }
+.dg-table { border-collapse: collapse; width: 100%; }
+.dg-table th { font-size: 0.7rem; color: var(--sub); font-weight: 600; padding: 4px 3px; text-align: center; }
+.dg-table tbody th { text-align: right; padding-right: 6px; white-space: nowrap; }
+.dg-table td { padding: 2px; text-align: center; }
+.dg-cell {
+  width: 100%; min-width: 44px; height: 38px; cursor: pointer;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: 8px;
+  font-size: 1rem; font-family: inherit;
+}
+.dg-cell:hover { border-color: var(--accent); }
+.dg-cell.filled { background: var(--accent-soft); border-style: solid; border-color: var(--accent); }
+.dg-dot { color: var(--sub); }
+.dg-plus { color: var(--green); font-weight: 700; }
+.dg-minus { color: var(--red); font-weight: 700; }
+.drill-cand { padding: 10px 14px; }
+.drill-cand.picked { border-color: var(--accent); }
+.drill-cand-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer; font-size: 0.92rem; }
+.drill-checks label { display: block; font-size: 0.8rem; color: var(--sub); margin: 10px 0 4px; }
+.drill-checks input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; font-family: inherit; }
+.drill-review-text { font-size: 0.92rem; }
+.drill-review-list { padding-left: 20px; }
+.drill-review-list li { font-size: 0.88rem; margin-bottom: 8px; }
+.drill-history-h { font-size: 0.85rem; color: var(--sub); margin: 12px 0 6px; }
+#drillThemeSel, .dr-cast, #drillConcession {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.92rem; font-family: inherit; background: var(--card); color: var(--text);
+  margin-bottom: 4px;
+}
+.drill-cast-label { display: block; font-size: 0.85rem; color: var(--sub); margin: 12px 0 4px; }
+
 /* segmented control (theme picker) */
 .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg-btn {

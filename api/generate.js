@@ -37,10 +37,26 @@ BODY 3 — Concession-rebuttal mode (防御: "even the counterargument fails"):
   Sentence 3 (Rebuttal): "However, this is not the case, because [why the counterargument fails]." / "However, [the limit of that counterargument]."
   Sentence 4 (Resolution): "Therefore, [why your side prevails]." / "For this reason, [your argument wins]."`;
 
-function buildEssayPrompt(topic, stance) {
+function buildEssayPrompt(topic, stance, worksheet) {
   const stanceText = stance === 'agree'
     ? 'AGREE — support the statement / answer YES'
     : 'DISAGREE — oppose the statement / answer NO';
+  const wsSection = worksheet ? `
+
+LEARNER'S BRAINSTORMING WORKSHEET (from a matrix-scan drill; notes may be in Japanese or rough English):
+${worksheet.points.map((p, i) => `Body ${i + 1} (${['causal-necessity', 'empirical', 'concession-rebuttal'][i]}) — perspective: [${p.layer} × ${p.domain}]
+  idea: ${p.idea}
+  mechanism draft: ${p.mech || '(none)'}
+  example: ${p.example || '(none)'}
+  vocabulary the learner has: ${p.vocab || '(none)'}`).join('\n')}${worksheet.concession ? `
+Concession material for Body 3 (a point favoring the OPPOSITE side, to concede then rebut): ${worksheet.concession}` : ''}
+
+Worksheet rules (IMPORTANT):
+- ADOPT each idea as that body's core argument — rephrase it into a proper English noun phrase satisfying the three principles; do not silently replace it with a different argument.
+- Body 1: build sentence 2 on the learner's mechanism draft, correcting the English.
+- Body 2: use the learner's example in the evidence sentence if it is real and appropriate.
+- Body 3: build the concession sentence from the concession material when provided.
+- Prefer the learner's vocabulary where natural, upgrading only when needed.` : '';
   return `You are an expert writing coach for the EIKEN Grade 1 English essay.
 
 TOPIC: ${topic}
@@ -61,10 +77,74 @@ Length constraint (STRICT):
 General rules:
 - Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1.
 - The final consequence of every body must point in the SAME direction as the stance.
-- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph.
+- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph.${wsSection}
 
 Return ONLY this JSON structure:
 {"bodies":[{"argument":"...","sentences":["...","...","...","..."],"ja":"..."},{...},{...}]}`;
+}
+
+/* 観点だしドリル（マトリクス走査）のワークシート全体を講評するプロンプト */
+function buildReviewDrillPrompt(topic, ws) {
+  const stanceText = ws.stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO';
+  return `You are an expert coach for the EIKEN Grade 1 English essay brainstorming stage.
+A learner practiced a structured "matrix scan" drill: convert the topic into a list of increases/decreases, then mechanically scan a matrix of affected layers (individuals / society and the nation / the world / future generations) × value domains (economy / health / institutions / technology / environment / fairness / ethics), asking at each cell "is this a plus or minus for this layer's domain?". Then they picked a stance (the side with MORE candidates), filtered candidates by three criteria (① a one-sentence mechanism like "As X grows, Y also grows" ② a real broad example like China/India ③ having the English vocabulary), keeping 3 finalists from mutually different rows AND columns, and cast them into Body roles (solid mechanism → causal, vivid example → empirical, visible counterargument → rebuttal). Discarded opposite-side points become Body 3 concession material.
+
+TOPIC: ${topic}
+
+STEP 1 — CHANGE LIST (what increases / decreases):
+${ws.changes.map(c => `- ${c.dir === 'dec' ? 'DECREASES' : 'INCREASES'}: ${c.text}`).join('\n')}
+
+STEP 2 — MATRIX SCAN CANDIDATES (cell = layer × domain; side = which stance it favors):
+${ws.candidates.map((c, i) => `${i + 1}. [${c.layer} × ${c.domain}] (favors ${c.side === 'agree' ? 'AGREE' : 'DISAGREE'}): ${c.note}`).join('\n')}
+
+STEP 3 — CHOSEN STANCE: ${stanceText}
+FINALISTS (3, self-checked against the three criteria):
+${ws.finalists.map((f, i) => `${i + 1}. [${f.layer} × ${f.domain}] ${f.note}
+   mechanism draft: ${f.mech || '(none)'}
+   example: ${f.example || '(none)'}
+   vocabulary: ${f.vocab || '(none)'}`).join('\n')}
+
+STEP 4 — CASTING: Body 1 (causal) = finalist ${ws.casting[0] + 1}, Body 2 (empirical) = finalist ${ws.casting[1] + 1}, Body 3 (rebuttal) = finalist ${ws.casting[2] + 1}
+CONCESSION MATERIAL: ${ws.concession || '(none chosen)'}
+
+Review the worksheet IN JAPANESE, concretely and encouragingly:
+- changesReview: is the change list truly neutral increases/decreases, or did claims/judgments leak in? Quote the problematic item if any.
+- scanReview: quality and coverage of the scan (both sides scanned? cells well spread?).
+- missedCells: up to 3 promising cells the learner did NOT fill, each with a one-line idea (use the Japanese layer names 個人/社会・国家/世界/将来世代 and domain names 経済/健康/制度/技術/環境/公平/倫理).
+- filterReview: are the three finalists really the strongest picks? Was the three-criteria self-check honest?
+- mechCorrections: for each finalist whose mechanism draft has English errors or is weak, give a corrected one-sentence version (index = finalist number 1-3; skip good ones).
+- castingReview: is each finalist in the right Body role, and is the concession material usable? Suggest swaps if better.
+- modelPicks: YOUR OWN best 3 picks for this stance — layer (Japanese), domain (Japanese), argument (English noun phrase, 5-8 words), role (one of 因果必然型/実証型/譲歩反駁型).
+- overall: 2-3 sentence summary with the single most important next step.
+
+Return ONLY this JSON:
+{"overall":"...","changesReview":"...","scanReview":"...","missedCells":[{"layer":"...","domain":"...","idea":"..."}],"filterReview":"...","mechCorrections":[{"index":1,"corrected":"...","comment":"..."}],"castingReview":"...","modelPicks":[{"layer":"...","domain":"...","argument":"...","role":"..."}]}`;
+}
+
+/* ドリル講評の検証・整形（不正なら null） */
+function normalizeDrillReview(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = (v, n) => String(v || '').slice(0, n);
+  const overall = s(raw.overall, 600);
+  if (!overall) return null;
+  return {
+    overall,
+    changesReview: s(raw.changesReview, 600),
+    scanReview: s(raw.scanReview, 600),
+    missedCells: (Array.isArray(raw.missedCells) ? raw.missedCells : []).slice(0, 4).map(m => ({
+      layer: s(m && m.layer, 20), domain: s(m && m.domain, 20), idea: s(m && m.idea, 200),
+    })).filter(m => m.idea),
+    filterReview: s(raw.filterReview, 600),
+    mechCorrections: (Array.isArray(raw.mechCorrections) ? raw.mechCorrections : []).slice(0, 3).map(m => ({
+      index: Math.max(1, Math.min(3, Number((m && m.index) || 1))),
+      corrected: s(m && m.corrected, 300), comment: s(m && m.comment, 300),
+    })).filter(m => m.corrected),
+    castingReview: s(raw.castingReview, 600),
+    modelPicks: (Array.isArray(raw.modelPicks) ? raw.modelPicks : []).slice(0, 3).map(m => ({
+      layer: s(m && m.layer, 20), domain: s(m && m.domain, 20),
+      argument: s(m && m.argument, 200), role: s(m && m.role, 20),
+    })).filter(m => m.argument),
+  };
 }
 
 function buildThemePrompt(existingTopics) {
@@ -277,7 +357,8 @@ module.exports = async (req, res) => {
     if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
       return res.status(400).json({ error: 'topic / stance が不正です' });
     }
-    const prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance);
+    const worksheet = sanitizeWorksheet(req.body.worksheet);
+    const prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance, worksheet);
     try {
       const parsed = await callGemini(prompt, apiKey, model);
       const bodies = Array.isArray(parsed.bodies) ? parsed.bodies.slice(0, 3).map(normalizeBody) : [];
@@ -285,6 +366,22 @@ module.exports = async (req, res) => {
         return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
       return res.status(200).json({ bodies });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'reviewDrill') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(req.body.stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const ws = sanitizeDrillWorksheet(req.body);
+    if (!ws) return res.status(400).json({ error: 'ワークシートの形式が不正です' });
+    try {
+      const raw = await callGemini(buildReviewDrillPrompt(topic.trim().slice(0, 300), ws), apiKey, model, 0.3);
+      const review = normalizeDrillReview(raw);
+      if (!review) return res.status(502).json({ error: '講評の形式が不正です' });
+      return res.status(200).json({ review });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
@@ -343,6 +440,40 @@ module.exports = async (req, res) => {
 
   return res.status(400).json({ error: 'mode が不正です' });
 };
+
+/* ドリル→エッセイ生成に添えるワークシートの検証・整形（不正・欠落なら null＝通常生成） */
+function sanitizeWorksheet(raw) {
+  if (!raw || !Array.isArray(raw.points) || raw.points.length !== 3) return null;
+  const s = (v, n) => String(v || '').trim().slice(0, n);
+  const points = raw.points.map(p => ({
+    layer: s(p && p.layer, 40), domain: s(p && p.domain, 40),
+    idea: s(p && p.idea, 200), mech: s(p && p.mech, 300),
+    example: s(p && p.example, 100), vocab: s(p && p.vocab, 100),
+  }));
+  if (points.some(p => !p.idea)) return null;
+  return { points, concession: s(raw.concession, 200) };
+}
+
+/* reviewDrill リクエスト全体の検証・整形（不正なら null） */
+function sanitizeDrillWorksheet(body) {
+  const s = (v, n) => String(v || '').trim().slice(0, n);
+  const changes = (Array.isArray(body.changes) ? body.changes : []).slice(0, 6)
+    .map(c => ({ dir: c && c.dir === 'dec' ? 'dec' : 'inc', text: s(c && c.text, 120) }))
+    .filter(c => c.text);
+  const candidates = (Array.isArray(body.candidates) ? body.candidates : []).slice(0, 28)
+    .map(c => ({
+      layer: s(c && c.layer, 20), domain: s(c && c.domain, 20),
+      side: c && c.side === 'disagree' ? 'disagree' : 'agree', note: s(c && c.note, 200),
+    })).filter(c => c.note && c.layer && c.domain);
+  const finalists = (Array.isArray(body.finalists) ? body.finalists : []).slice(0, 3)
+    .map(f => ({
+      layer: s(f && f.layer, 20), domain: s(f && f.domain, 20), note: s(f && f.note, 200),
+      mech: s(f && f.mech, 300), example: s(f && f.example, 100), vocab: s(f && f.vocab, 100),
+    })).filter(f => f.note);
+  const casting = Array.isArray(body.casting) ? body.casting.slice(0, 3).map(n => Math.max(0, Math.min(2, Number(n) || 0))) : null;
+  if (changes.length < 2 || candidates.length < 3 || finalists.length !== 3 || !casting || casting.length !== 3) return null;
+  return { stance: body.stance, changes, candidates, finalists, casting, concession: s(body.concession, 200) };
+}
 
 async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
   const raw = await callGemini(buildEvalPrompt(topic, stance, paragraphs), apiKey, model, 0.2);

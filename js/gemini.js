@@ -49,8 +49,8 @@ function parseBody(b, i) {
   return { argument, sentences, ja: String((b && b.ja) || '').trim() };
 }
 
-async function generateEssaySet(theme, stance) {
-  const data = await apiCall({ mode: 'essay', topic: theme.topic, stance });
+async function generateEssaySet(theme, stance, worksheet) {
+  const data = await apiCall({ mode: 'essay', topic: theme.topic, stance, worksheet: worksheet || undefined });
   if (!data || !Array.isArray(data.bodies) || data.bodies.length < 3) {
     throw new Error('生成結果の形式が不正です（Body が3つ揃っていません）');
   }
@@ -72,6 +72,13 @@ async function evaluateEssaySet(set) {
   const data = await apiCall({ mode: 'evaluate', topic: set.topic, stance: set.stance, bodies: set.bodies });
   if (!data || !data.evaluation) throw new Error('採点結果の形式が不正です');
   return data.evaluation;
+}
+
+/* 観点だしドリル（マトリクス走査）のワークシートを講評してもらう */
+async function reviewDrillWorksheet(payload) {
+  const data = await apiCall(Object.assign({ mode: 'reviewDrill' }, payload));
+  if (!data || !data.review || !data.review.overall) throw new Error('講評の形式が不正です');
+  return data.review;
 }
 
 /* 採点についてGeminiと会話する（履歴は呼び出し側が保持） */
