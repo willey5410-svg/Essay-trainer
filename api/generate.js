@@ -16,26 +16,43 @@ const ARGUMENT_PRINCIPLES = `A strong argument follows three principles:
 2. STRUCTURAL: it names a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"
 3. ABSTRACT: it is one level more abstract than a narrow concrete anecdote (e.g. "AI does my homework" → "the learning process is altered")`;
 
-/* 3つの Body に与える「4文アーキテクチャ」。1文=1機能で役割を固定する。 */
-const BODY_ARCHITECTURE = `Each body paragraph MUST consist of EXACTLY FOUR sentences, each performing a fixed function. The three bodies use DIFFERENT rhetorical modes so the essay never feels repetitive. Every sentence is a complete sentence: it starts with a capital letter and ends with a period.
+/* 3つの Body に与える「4文アーキテクチャ」。1文=1機能で役割を固定しつつ、
+   模範解答12本から抽出した「展開の武器」「実証の格付け」で②③を強くする。 */
+const BODY_ARCHITECTURE = `Each body paragraph MUST consist of EXACTLY FOUR sentences, each performing a fixed function (about 12–15 words each). The three bodies use DIFFERENT rhetorical modes so the essay never feels repetitive. Every sentence is complete: capitalized start, period at the end.
 
 BODY 1 — Causal-necessity mode (論理: "it must logically follow"):
-  Sentence 1 (Claim): "First of all, [the argument] inevitably leads to [a consequence]."
-  Sentence 2 (Mechanism): explain WHY it happens — "As [one change occurs], [a linked change] also grows / weakens."
-  Sentence 3 (Escalation): push to a graver stage — "Sooner or later, [a worse consequence follows]." (or "In fact, [real-world backing].")
-  Sentence 4 (Stakes): land on who is affected — "This burden on [group] will become intolerable." (or "This will greatly benefit [group].")
+  1 Claim: "First of all, [the argument] inevitably leads to [a consequence]."
+  2 Mechanism: explain WHY — the linked-growth pattern is the default: "As [one change occurs], [a linked change] also grows / will fail."
+  3 Escalation: push to a graver stage: "Sooner or later, [a worse consequence follows]." (or "In fact, [real-world backing].")
+  4 Stakes: land on who is affected: "This burden on [group] will become intolerable." / "This will greatly benefit [group]."
 
 BODY 2 — Empirical mode (実証: "it is actually happening"):
-  Sentence 1 (Claim): "Secondly, [claim]."
-  Sentence 2 (General explanation): "This is because ..." / "[subject] are becoming able to ..."
-  Sentence 3 (Evidence): "In fact, [something really occurring]." / "For example, [a concrete case]." / "..., such as [a real broad example like China, India, or developing countries]." Use a real but broad example — do NOT invent statistics or fake proper nouns.
-  Sentence 4 (Implication): "This means that [a society-level consequence]."
+  1 Claim: "Secondly, [claim]."
+  2 General explanation: "This is because ..." / "[subject] are becoming able to ..."
+  3 Evidence: use the STRONGEST phrase you can honestly support, in descending strength:
+     "Studies have shown that ..." > "experience shows that ..." > "In fact, [something really occurring]." > "[subject] are already -ing ..." > "These days, we often see ..." > "For example, [a concrete case]." > "..., such as [a real broad example like China, India, developing countries]."
+     Use a real but broad example — NEVER invent statistics or fake proper nouns.
+  4 Implication: "This means that [a society-level consequence]."
 
 BODY 3 — Concession-rebuttal mode (防御: "even the counterargument fails"):
-  Sentence 1 (Claim): "Finally, [claim]."
-  Sentence 2 (Concession): "It is true that [a plausible counterargument]." / "While some may argue that [counterargument],"
-  Sentence 3 (Rebuttal): "However, this is not the case, because [why the counterargument fails]." / "However, [the limit of that counterargument]."
-  Sentence 4 (Resolution): "Therefore, [why your side prevails]." / "For this reason, [your argument wins]."`;
+  1 Claim: "Finally, [claim]."
+  2 Concession: "It is true that [a plausible counterargument]." / "While some may argue that [counterargument],"
+  3 Rebuttal: "However, this is not the case, because [why it fails]." / "However, [the limit of that counterargument]."
+  4 Resolution: "Therefore, [why your side prevails]." / "For this reason, [your argument wins]."
+  ALTERNATIVE when a clean rebuttal is hard — CONTRAST type: 1 Claim → 2 "In [the conventional approach], [a drawback]." → 3 "With [the approach you support], [an advantage]." → 4 resolution.
+
+EXPANSION WEAPONS for sentences 2–3 (choose the ONE that best fits the topic; do NOT force every body to use one):
+- Time-contrast: "In the past, [old state]. Now, thanks to [cause], [new state]." — turns the change itself into the argument.
+- Conditional-scenario (powerful for a negative stance): "If [X] were to [happen], [a bad thing] could [occur], which would ultimately harm [a large value such as democracy or public trust]." — escalate to a big value.
+- Appearance-vs-reality (front-loads rebuttal; good for Body 1 on a negative stance): "Initially, [X] seems to [bring a benefit]. These benefits, however, are more illusory than real, because [reality]."
+- Principle-vs-reality: "The principle of [X] is important. However, experience shows that [the reality falls short]."
+- Time-chain: "When [event happens], [a first effect]. In time, [a later effect], thus contributing to [an outcome]."
+
+CONSEQUENCE endings for sentence 4 (vary them; use "This means that" in AT MOST one body): "As a result, ..." (Body 1) / "This means that ..." (Body 2) / "Therefore, ..." or "For this reason, ..." (Body 3) / "..., which would ultimately harm [a large value]" / "..., thus contributing to [an outcome]".
+
+CAUSAL-STRENGTH verbs to vary force: inevitably leads to / puts a great strain on / exacerbates / helps alleviate / enables [A] to [do] / "It makes no economic sense to ... when ...".
+
+PARAGRAPH MARKERS — keep ONE system, but you MAY drop the marker on exactly ONE body if its subject already signals a new point: standard (First of all / Secondly / Finally); noun-subject (One reason is that / Another reason is / A third factor is); emphatic (The biggest reason is that / Another related point is that / My final argument ...). Content-bearing markers read better than a bare "Thirdly".`;
 
 function buildEssayPrompt(topic, stance, worksheet) {
   const stanceText = stance === 'agree'
@@ -201,8 +218,8 @@ BODY PARAGRAPHS:
 3. ${paragraphs[2]}
 
 Score each criterion from 0 to 10 (0.5 steps allowed):
-- structure: within each paragraph, does the four-sentence flow (claim → development → evidence/escalation → landing) hold together and read logically? Does Body 3's concession-rebuttal actually neutralize the counterargument?
-- content: are the three arguments well-chosen, clearly distinct, and developed with real depth (concrete mechanisms, evidence, and consequences rather than vague claims)? Is it clear WHY each argument supports the stance?
+- structure: within each paragraph, does the four-sentence flow (claim → development → evidence/escalation → landing) hold together and read logically? Does each body use a rhetorical mode suited to its role, and does the essay VARY its argumentation (causal mechanism, empirical evidence, concession-rebuttal) rather than repeating one pattern or one consequence marker? Does Body 3 actually neutralize the counterargument?
+- content: are the three arguments well-chosen, clearly distinct, and developed with real depth? Reward concrete mechanisms ("As X grows, Y also grows"), strong evidence phrasing (studies/experience/"in fact"/"already"), and escalation to a large value ("which would ultimately harm ...") over vague claims. Is it clear WHY each argument supports the stance?
 - language: grammar accuracy, natural phrasing, and vocabulary range appropriate for EIKEN Grade 1 (CEFR C1).
 
 For each criterion also write one short comment IN JAPANESE: what is good and what specifically should be improved.
