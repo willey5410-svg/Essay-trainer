@@ -93,6 +93,13 @@ async function generateDrillScan(topic, changes) {
   return data.cells;
 }
 
+/* ドリル Stage 3 のフィルタ（3つの選定＋①②③記入）を Gemini に代行してもらう */
+async function generateDrillFilter(topic, stance, candidates) {
+  const data = await apiCall({ mode: 'drillFilter', topic, stance, candidates });
+  if (!data || !Array.isArray(data.finalists) || !data.finalists.length) throw new Error('フィルタの生成に失敗しました');
+  return data.finalists;
+}
+
 /* 観点だしドリル（マトリクス走査）のワークシートを講評してもらう */
 async function reviewDrillWorksheet(payload) {
   const data = await apiCall(Object.assign({ mode: 'reviewDrill' }, payload));

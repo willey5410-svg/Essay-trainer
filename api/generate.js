@@ -239,6 +239,46 @@ function normalizeDrillScan(raw, nChanges) {
   return out.length ? out : null;
 }
 
+/* ドリル Stage 3 の3基準フィルタ（3つの選定＋①②③記入）を Gemini に代行させるプロンプト */
+function buildDrillFilterPrompt(topic, stance, candidates) {
+  const stanceText = stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO';
+  return `You are a coach for the EIKEN Grade 1 essay brainstorming stage.
+The learner scanned a matrix and now must apply Step 3: pick the 3 STRONGEST perspectives to actually write about, using three acceptance criteria, then supply the raw material for each.
+
+TOPIC: ${topic}
+CHOSEN STANCE: ${stanceText}
+
+CANDIDATE PERSPECTIVES (all favor the chosen stance):
+${candidates.map((c, i) => `${i + 1}. [${c.layer} × ${c.domain}] ${c.note}`).join('\n')}
+
+Pick EXACTLY 3 finalists that best pass all three criteria:
+① MECHANISM: you can write the linked-growth in ONE English sentence ("As X ..., Y also grows/fails").
+② EXAMPLE: a real, broad example exists (e.g. China / India / developing countries / aging societies) — no invented statistics.
+③ VOCABULARY: the supporting English words are ordinary enough to actually use.
+The 3 finalists MUST occupy mutually DIFFERENT layers AND DIFFERENT domains (this structurally prevents overlap).
+
+For EACH finalist provide:
+- layer and domain: the EXACT Japanese names copied from the candidate you chose
+- mech: ONE natural English sentence expressing the mechanism (correct, exam-level)
+- example: a short real broad example (English, a few words)
+- vocab: 2–3 supporting English words (comma-separated)
+
+Return ONLY this JSON:
+{"finalists":[{"layer":"個人","domain":"経済","mech":"...","example":"...","vocab":"..."}]}`;
+}
+
+function normalizeDrillFilter(raw) {
+  if (!raw || !Array.isArray(raw.finalists)) return null;
+  const fs = raw.finalists.slice(0, 3).map(f => ({
+    layer: String((f && f.layer) || '').trim(),
+    domain: String((f && f.domain) || '').trim(),
+    mech: String((f && f.mech) || '').trim().slice(0, 300),
+    example: String((f && f.example) || '').trim().slice(0, 100),
+    vocab: String((f && f.vocab) || '').trim().slice(0, 100),
+  })).filter(f => DRILL_LAYER_NAMES.includes(f.layer) && DRILL_DOMAIN_NAMES.includes(f.domain));
+  return fs.length ? fs : null;
+}
+
 function buildThemePrompt(existingTopics) {
   return `You are an expert on the EIKEN Grade 1 English essay test.
 Propose 6 NEW essay topics in the style of real EIKEN Grade 1 prompts (agree/disagree statements or yes/no policy questions).
@@ -490,6 +530,24 @@ module.exports = async (req, res) => {
       const cells = normalizeDrillScan(raw, changes.length);
       if (!cells) return res.status(502).json({ error: '走査の生成に失敗しました' });
       return res.status(200).json({ cells });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'drillFilter') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(req.body.stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const candidates = (Array.isArray(req.body.candidates) ? req.body.candidates : []).slice(0, 20)
+      .map(c => ({ layer: String((c && c.layer) || '').trim().slice(0, 20), domain: String((c && c.domain) || '').trim().slice(0, 20), note: String((c && c.note) || '').trim().slice(0, 200) }))
+      .filter(c => c.note && c.layer && c.domain);
+    if (candidates.length < 3) return res.status(400).json({ error: '候補が不足しています' });
+    try {
+      const raw = await callGemini(buildDrillFilterPrompt(topic.trim().slice(0, 300), req.body.stance, candidates), apiKey, model, 0.3);
+      const finalists = normalizeDrillFilter(raw);
+      if (!finalists) return res.status(502).json({ error: 'フィルタの生成に失敗しました' });
+      return res.status(200).json({ finalists });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

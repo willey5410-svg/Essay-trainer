@@ -627,7 +627,7 @@ function startDrill(theme) {
     finalists: [], details: {},
     casting: [0, 1, 2], // Body i に割り当てる finalists 配列上の添字
     concession: '',
-    review: null, busy: false, error: null, fillingChanges: false, fillingScan: false,
+    review: null, busy: false, error: null, fillingChanges: false, fillingScan: false, fillingFilter: false,
     fromHistory: false,
     deadline: Date.now() + DRILL_TOTAL_SECONDS * 1000,
     timerId: null,
@@ -848,13 +848,67 @@ function drillStage3(d) {
       <button class="seg-btn${d.stance === 'agree' ? ' active' : ''}" data-action="drill-stance" data-stance="agree">賛成で書く（${nAgree}個）</button>
       <button class="seg-btn${d.stance === 'disagree' ? ' active' : ''}" data-action="drill-stance" data-stance="disagree">反対で書く（${nDis}個）</button>
     </div>
-    <p class="hint-text">3基準（①メカニズム ②実例 ③語彙 — <strong>語彙が無い観点は本番では存在しないのと同じ</strong>）を自己チェックして3つ選択。<strong>層もドメインも互いに別のマス</strong>から選ぶこと。</p>
+    <p class="hint-text">3基準（①メカニズム ②実例 ③語彙 — <strong>語彙が無い観点は本番では存在しないのと同じ</strong>）を自己チェックして3つ選択。<strong>層もドメインも互いに別のマス</strong>から選ぶこと。迷ったら Gemini に絞らせて構いません。</p>
+    <div class="row"><button class="btn small ghost" data-action="drill-fill-filter" ${d.fillingFilter ? 'disabled' : ''}>${d.fillingFilter ? '🤖 Gemini が選定中…' : '🤖 3つの選定と①②③をGeminiに埋めてもらう'}</button></div>
   </div>
   ${items || '<p class="empty">この側の候補がありません。走査に戻って追加してください。</p>'}
   <div class="row">
     <button class="btn" data-action="drill-to-4">次へ（配役）</button>
     <button class="btn ghost" data-action="drill-back" data-stage="2">← 走査に戻る</button>
   </div>`;
+}
+
+/* Stage 3 のフィルタ（3つの選定＋①②③記入）を Gemini に埋めてもらう */
+async function doFillDrillFilter() {
+  const d = state.drill;
+  if (!d || d.fillingFilter) return;
+  const side = d.candidates.filter(c => c.side === d.stance);
+  if (side.length < 3) { d.error = 'この側の候補が3つ未満です。走査に戻って追加してください'; render(); return; }
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = 'フィルタの生成には合言葉の入力が必要です';
+    render();
+    return;
+  }
+  d.fillingFilter = true;
+  d.error = null;
+  render();
+  try {
+    const res = await generateDrillFilter(d.topic, d.stance,
+      side.map(c => ({ layer: DRILL_LAYERS[c.layer].ja, domain: DRILL_DOMAINS[c.domain].ja, note: c.note })));
+    // 層・ドメインが互いに別になるよう先勝ちで3つ選ぶ（構造的な重複防止）
+    const picked = [];
+    const usedLayer = new Set();
+    const usedDomain = new Set();
+    for (const f of res) {
+      const li = DRILL_LAYERS.findIndex(l => l.ja === f.layer);
+      const di = DRILL_DOMAINS.findIndex(dm => dm.ja === f.domain);
+      if (li < 0 || di < 0 || usedLayer.has(li) || usedDomain.has(di)) continue;
+      const cand = side.find(c => c.layer === li && c.domain === di);
+      if (!cand || picked.includes(cand.id)) continue;
+      usedLayer.add(li);
+      usedDomain.add(di);
+      picked.push(cand.id);
+      d.details[cand.id] = {
+        mech: String(f.mech || '').trim(),
+        example: String(f.example || '').trim(),
+        vocab: String(f.vocab || '').trim(),
+      };
+      if (picked.length === 3) break;
+    }
+    if (picked.length) d.finalists = picked;
+    else d.error = 'フィルタの生成結果を候補に対応づけられませんでした';
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      d.error = 'フィルタの生成に失敗しました：' + e.message;
+    }
+  }
+  d.fillingFilter = false;
+  render();
 }
 
 /* Stage 4: Body 1/2/3 への配役と譲歩素材の選択 */
@@ -1488,6 +1542,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'drill-add-change') { state.drill.changes.push({ dir: 'inc', text: '' }); render(); }
   else if (a === 'drill-fill-changes') { doFillDrillChanges(); }
   else if (a === 'drill-fill-scan') { doFillDrillScan(); }
+  else if (a === 'drill-fill-filter') { doFillDrillFilter(); }
   else if (a === 'drill-del-change') { state.drill.changes.splice(Number(el.dataset.i), 1); render(); }
   else if (a === 'drill-toggle-change') {
     const c = state.drill.changes[Number(el.dataset.i)];
