@@ -20,15 +20,12 @@ function applyTheme() {
 }
 
 let state = {
-  view: 'home',        // home | brainstorm | study | loading
+  view: 'home',        // home | study | loading
   modal: null,         // settings | stance | keyword | null
   keywordError: null,
   busyKeyword: false,
   pendingTheme: null,
   pendingStance: null,
-  bsMode: 'generate', // generate（新規生成前）| practice（既存エッセイへの反復練習）
-  bsSetId: null,
-  bsTimerId: null,
   themeAddError: null,
   themeDraft: { en: '', ja: '', cat: null },
   loadingText: '',
@@ -38,7 +35,6 @@ let state = {
   notice: null,
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
-  bodyRewrite: null,     // {setId, point, bodyIdx, result, error, busy}
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
   chatSetId: null,
   chatDraft: '',
@@ -260,14 +256,12 @@ function findSet(id) { return getSets().find(s => s.id === id); }
 function render() {
   let html = '';
   if (state.view === 'home') html = viewHome();
-  else if (state.view === 'brainstorm') html = viewBrainstorm();
   else if (state.view === 'study') html = viewStudy();
   else if (state.view === 'loading') html = viewLoading();
   if (state.modal === 'settings') html += modalSettings();
   if (state.modal === 'stance') html += modalStance();
   if (state.modal === 'keyword') html += modalKeyword();
   if (state.modal === 'themeAdd') html += modalThemeAdd();
-  if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
   if (state.modal === 'bodyEdit') html += modalBodyEdit();
   if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
@@ -349,91 +343,6 @@ function viewHome() {
     </section>`;
 }
 
-/* ---------- brainstorm view（生成前の論点出しトレーニング） ---------- */
-
-const BS_SECONDS = 90;
-
-function viewBrainstorm() {
-  const practice = state.bsMode === 'practice';
-  const set = practice ? findSet(state.bsSetId) : null;
-  if (practice && !set) { state.view = 'home'; return viewHome(); }
-  const topic = practice ? set.topic : state.pendingTheme.topic;
-  const topicJa = practice ? set.topicJa : state.pendingTheme.topicJa;
-  const stance = practice ? set.stance : state.pendingStance;
-  return `<header class="topbar">
-      <button class="btn ghost" data-action="bs-cancel">← 中止</button>
-      <span class="topbar-title">論点出しトレーニング</span>
-    </header>
-    ${banner()}
-    <div class="topic-head">
-      <h2>${esc(topic)}</h2>
-      <p class="set-sub">${esc(topicJa || '')} ${stanceBadge(stance)}</p>
-    </div>
-    <div class="card">
-      <div class="body-head">
-        <span class="slot-label">90秒で論点を3つ（<strong>A does B</strong> の形で考える）</span>
-        <span id="bsTimer" class="bs-timer">1:30</span>
-      </div>
-      <input type="text" class="bs-input" id="bsPoint0" placeholder="論点① 例：AIが仕事を奪う">
-      <input type="text" class="bs-input" id="bsPoint1" placeholder="論点②">
-      <input type="text" class="bs-input" id="bsPoint2" placeholder="論点③">
-      <button class="btn small ghost" data-action="bs-hint">💡 観点の作り方のコツ</button>
-      <div id="bsHints" class="bs-hints" hidden>
-        <p><strong>① 中立に書く</strong>：賛成・反対の評価を含めず「何が変わるか」だけを書く<br>
-          <span class="ex-good">○ 労働力構造が再編される</span>／<span class="ex-bad">× 批判的思考力が低下する</span></p>
-        <p><strong>② 構造で考える</strong>：「誰が得するか」ではなく、どの構造・仕組みが変わるかを探す<br>
-          教育構造／労働力構造／情報流通／意思決定／社会制度／評価制度／市場構造／技術開発／資源配分</p>
-        <p><strong>③ 一段抽象化する</strong>：具体的な現象ではなく、一段上の概念で表現する<br>
-          「AIで宿題をする」→「学習プロセスが変化しうる」</p>
-      </div>
-      <div class="row">
-        <button class="btn" data-action="bs-generate">${practice ? '判定する（Gemini で採点）' : '答え合わせ（Gemini で生成）'}</button>
-        <button class="btn ghost" data-action="bs-skip">${practice ? 'キャンセル' : 'スキップして生成'}</button>
-      </div>
-      <p class="hint-text">入力した論点は Gemini が有効性を判定し、${practice ? 'このエッセイの観点と並べて比較表示されます' : '生成された論点と並べて比較表示されます'}。日本語でもOKです。</p>
-    </div>`;
-}
-
-/* 生成済みエッセイに対する論点だしの反復練習を開始する（本文は変更しない） */
-function startBrainstormPractice(setId) {
-  state.bsMode = 'practice';
-  state.bsSetId = setId;
-  state.error = null;
-  startBrainstorm();
-}
-
-function startBrainstorm() {
-  state.modal = null;
-  state.view = 'brainstorm';
-  render();
-  stopBsTimer();
-  const deadline = Date.now() + BS_SECONDS * 1000;
-  // 再レンダリングで入力値が消えないよう、タイマーは DOM を直接更新する
-  state.bsTimerId = setInterval(() => {
-    const el = document.getElementById('bsTimer');
-    if (!el || state.view !== 'brainstorm') { stopBsTimer(); return; }
-    const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-    if (left > 0) {
-      el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
-    } else {
-      el.textContent = '⏰ 時間切れ';
-      el.classList.add('over');
-      stopBsTimer();
-    }
-  }, 250);
-}
-
-function stopBsTimer() {
-  if (state.bsTimerId) { clearInterval(state.bsTimerId); state.bsTimerId = null; }
-}
-
-function collectBrainstormPoints() {
-  return [0, 1, 2]
-    .map(i => (document.getElementById('bsPoint' + i) || {}).value || '')
-    .map(v => v.trim())
-    .filter(Boolean);
-}
-
 /* ---------- study view ---------- */
 
 function viewStudy() {
@@ -476,40 +385,8 @@ function viewStudy() {
       </div>
     </div>
     <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。色付き部分は<strong>タップで編集</strong>でき、保存すると再採点されます。</p>
-    ${compareCard(set)}
     ${evalSection(set)}
     ${bodiesHtml}`;
-}
-
-function compareCard(set) {
-  const practiceBtn = `<button class="btn small ghost" data-action="bs-practice" data-id="${esc(set.id)}">🧠 論点だしトレーニングをもう一度</button>`;
-  if (!set.userPoints || !set.userPoints.length) {
-    return `<div class="card compare-card">
-      <h3>🧠 論点だしトレーニング</h3>
-      <p class="hint-text">このテーマで自分なりの論点を3つ考える練習ができます。</p>
-      ${practiceBtn}
-    </div>`;
-  }
-  const badge = v => v === 'valid' ? '<span class="verdict valid">✅ 有効</span>'
-    : v === 'invalid' ? '<span class="verdict invalid">✖ 要注意</span>'
-    : '<span class="verdict weak">△ 弱い</span>';
-  const reviews = set.pointsReview || [];
-  const mine = set.userPoints.map((pt, i) => {
-    const r = reviews[i];
-    const canReflect = r && r.verdict !== 'invalid';
-    return `<li>${esc(pt)} ${r ? badge(r.verdict) : ''}
-      ${r && r.comment ? `<div class="verdict-comment">${esc(r.comment)}</div>` : ''}
-      ${canReflect ? `<button class="btn small ghost" data-action="open-rewrite-body" data-set="${esc(set.id)}" data-point="${esc(pt)}">→ Bodyに反映</button>` : ''}</li>`;
-  }).join('');
-  const gemini = set.bodies.map(b => `<li>${esc(b.argument || '')}</li>`).join('');
-  return `<div class="card compare-card">
-    <h3>🧠 論点の答え合わせ</h3>
-    <div class="compare-cols">
-      <div><h4>あなたの論点</h4><ol>${mine}</ol></div>
-      <div><h4>Gemini の論点</h4><ol>${gemini}</ol></div>
-    </div>
-    <div class="row">${practiceBtn}</div>
-  </div>`;
 }
 
 /* 採点カード：採点済み／採点中／未採点（採点ボタン表示）の3状態 */
@@ -616,98 +493,6 @@ function modalStance() {
       <button class="btn ghost wide" data-action="close-modal">キャンセル</button>
     </div>
   </div>`;
-}
-
-/* ---------- 論点をBodyに反映（丸ごと書き直し） ---------- */
-
-function modalBodyRewrite() {
-  const br = state.bodyRewrite;
-  const set = findSet(br.setId);
-  if (!set) return '';
-  let inner;
-  if (br.result) {
-    inner = `<p class="study-line">${br.result.sentences.map(renderSentence).join(' ')}</p>
-      <p class="ja-text">${esc(br.result.ja)}</p>
-      <div class="row">
-        <button class="btn small" data-action="apply-rewrite-body">この内容で Body ${br.bodyIdx + 1} を置き換える</button>
-        <button class="btn small ghost" data-action="pick-rewrite-body" data-body="${br.bodyIdx}">もう一度書き直す</button>
-        <button class="btn small ghost" data-action="close-modal">キャンセル</button>
-      </div>`;
-  } else if (br.bodyIdx !== null) {
-    inner = br.busy
-      ? `<p class="hint-text">Gemini が Body ${br.bodyIdx + 1} を書き直し中…</p>`
-      : `${br.error ? `<p class="field-error">${esc(br.error)}</p>` : ''}
-        <div class="row">
-          <button class="btn small ghost" data-action="pick-rewrite-body" data-body="${br.bodyIdx}">もう一度試す</button>
-          <button class="btn small ghost" data-action="close-modal">キャンセル</button>
-        </div>`;
-  } else {
-    inner = `<p class="hint-text">この論点を使って書き換える Body を選んでください。</p>
-      <div class="row">
-        ${[0, 1, 2].map(i => `<button class="btn small" data-action="pick-rewrite-body" data-body="${i}">Body ${i + 1}</button>`).join('')}
-      </div>
-      <button class="btn ghost wide" data-action="close-modal">キャンセル</button>`;
-  }
-  return `<div class="overlay" data-action="close-modal">
-    <div class="modal" data-stop>
-      <h3>🔁 論点をBodyに反映</h3>
-      <p class="hint-text slot-edit-context">「${esc(br.point)}」</p>
-      ${inner}
-    </div>
-  </div>`;
-}
-
-async function doRewriteBody(bodyIdx) {
-  const br = state.bodyRewrite;
-  if (!br) return;
-  br.bodyIdx = bodyIdx;
-  br.result = null;
-  br.error = null;
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '書き換えには合言葉の入力が必要です';
-    render();
-    return;
-  }
-  br.busy = true;
-  render();
-  try {
-    const set = findSet(br.setId);
-    br.result = await rewriteBodyWithPoint(set, bodyIdx, br.point);
-  } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-      state.bodyRewrite = null;
-      render();
-      return;
-    }
-    br.error = e.message;
-  }
-  br.busy = false;
-  render();
-}
-
-function applyBodyRewrite() {
-  const br = state.bodyRewrite;
-  if (!br || !br.result) return;
-  const sets = getSets();
-  const set = sets.find(s => s.id === br.setId);
-  if (!set) return;
-  const body = set.bodies[br.bodyIdx];
-  // 書き換え前の Body 全体をスナップショット（元に戻す用）。二重書き換えでも初回の元文を保持する。
-  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '' };
-  body.argument = br.result.argument;
-  body.sentences = br.result.sentences;
-  body.ja = br.result.ja;
-  set.evaluation = null; // 内容が変わったため採点をやり直す
-  saveSetsList(sets);
-  state.modal = null;
-  state.bodyRewrite = null;
-  state.notice = `Body ${br.bodyIdx + 1} をあなたの論点で書き換えました。再採点します。`;
-  render();
-  autoRescore(set.id);
 }
 
 /* ---------- 色付き（自由作文）部分の手直し ---------- */
@@ -956,19 +741,16 @@ async function runBackgroundEvaluation(setId) {
   if (state.view === 'study' && state.setId === setId) render();
 }
 
-/* 同じテーマ・スタンス・論点で作り直す（現在の構成は削除して差し替える） */
+/* 同じテーマ・スタンスで作り直す（現在の構成は削除して差し替える） */
 function regenerateEssay(setId) {
   const set = findSet(setId);
   if (!set) return;
   if (!confirm('この構成を削除し、同じテーマ・立場で新しく作り直しますか？')) return;
   saveSetsList(getSets().filter(s => s.id !== setId));
-  const progress = getProgress();
-  delete progress[setId];
-  saveProgress(progress);
-  doGenerateEssay({ topic: set.topic, topicJa: set.topicJa }, set.stance, set.userPoints || []);
+  doGenerateEssay({ topic: set.topic, topicJa: set.topicJa }, set.stance);
 }
 
-async function doGenerateEssay(theme, stance, userPoints) {
+async function doGenerateEssay(theme, stance) {
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
     state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
@@ -977,10 +759,10 @@ async function doGenerateEssay(theme, stance, userPoints) {
   }
   state.modal = null;
   state.view = 'loading';
-  state.loadingText = 'Gemini が例文を生成中…（論点の判定を含め、通常10〜20秒ほどです）';
+  state.loadingText = 'Gemini が例文を生成中…（通常10〜20秒ほどです）';
   render();
   try {
-    const set = await generateEssaySet(theme, stance, userPoints);
+    const set = await generateEssaySet(theme, stance);
     const sets = getSets();
     sets.unshift(set);
     saveSetsList(sets);
@@ -999,51 +781,6 @@ async function doGenerateEssay(theme, stance, userPoints) {
       state.error = '生成に失敗しました：' + e.message;
     }
   }
-  render();
-}
-
-/* 論点だしトレーニングの反復練習：エッセイ本文は変えず、最新の判定結果だけ上書き保存する */
-async function doReviewPointsPractice(points) {
-  const setId = state.bsSetId;
-  if (!points.length) {
-    state.view = 'study';
-    state.setId = setId;
-    state.error = '論点を1つ以上入力してください';
-    render();
-    return;
-  }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '判定には合言葉の入力が必要です';
-    render();
-    return;
-  }
-  state.modal = null;
-  state.view = 'loading';
-  state.loadingText = 'Gemini が論点を判定中…';
-  render();
-  try {
-    const set = findSet(setId);
-    const result = await reviewPoints(set, points);
-    const sets = getSets();
-    const s2 = sets.find(s => s.id === setId);
-    if (s2) {
-      s2.userPoints = result.userPoints;
-      s2.pointsReview = result.pointsReview;
-      saveSetsList(sets);
-    }
-    state.error = null;
-  } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
-      state.error = '判定に失敗しました：' + e.message;
-    }
-  }
-  state.view = 'study';
-  state.setId = setId;
   render();
 }
 
@@ -1163,7 +900,7 @@ $app.addEventListener('click', (ev) => {
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
-    state.bodyRewrite = null; state.bodyEdit = null; state.chatError = null;
+    state.bodyEdit = null; state.chatError = null;
     render();
   }
   else if (a === 'open-body-edit') {
@@ -1231,29 +968,7 @@ $app.addEventListener('click', (ev) => {
       return;
     }
     state.pendingStance = el.dataset.stance;
-    state.bsMode = 'generate';
-    startBrainstorm();
-  }
-  else if (a === 'bs-hint') {
-    const hints = document.getElementById('bsHints');
-    if (hints) hints.hidden = !hints.hidden;
-  }
-  else if (a === 'bs-generate') {
-    const points = collectBrainstormPoints();
-    stopBsTimer();
-    if (state.bsMode === 'practice') doReviewPointsPractice(points);
-    else doGenerateEssay(state.pendingTheme, state.pendingStance, points);
-  }
-  else if (a === 'bs-skip') {
-    stopBsTimer();
-    if (state.bsMode === 'practice') { state.view = 'study'; state.setId = state.bsSetId; render(); }
-    else doGenerateEssay(state.pendingTheme, state.pendingStance, []);
-  }
-  else if (a === 'bs-cancel') {
-    stopBsTimer();
-    if (state.bsMode === 'practice') { state.view = 'study'; state.setId = state.bsSetId; }
-    else state.view = 'home';
-    render();
+    doGenerateEssay(state.pendingTheme, state.pendingStance);
   }
   else if (a === 'gen-themes') { doGenerateThemes(); }
   else if (a === 'open-set') {
@@ -1269,7 +984,7 @@ $app.addEventListener('click', (ev) => {
       render();
     }
   }
-  else if (a === 'go-home') { stopBsTimer(); state.view = 'home'; render(); }
+  else if (a === 'go-home') { state.view = 'home'; render(); }
   else if (a === 'toggle-ja') {
     const bi = Number(el.dataset.body);
     state.showJa[bi] = !state.showJa[bi];
@@ -1288,14 +1003,6 @@ $app.addEventListener('click', (ev) => {
   }
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
-  else if (a === 'bs-practice') { startBrainstormPractice(el.dataset.id); }
-  else if (a === 'open-rewrite-body') {
-    state.bodyRewrite = { setId: el.dataset.set, point: el.dataset.point, bodyIdx: null, result: null, error: null, busy: false };
-    state.modal = 'bodyRewrite';
-    render();
-  }
-  else if (a === 'pick-rewrite-body') { doRewriteBody(Number(el.dataset.body)); }
-  else if (a === 'apply-rewrite-body') { applyBodyRewrite(); }
   else if (a === 'open-chat') {
     state.chatSetId = el.dataset.id;
     state.chatDraft = '';

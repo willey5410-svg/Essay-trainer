@@ -10,10 +10,7 @@ const crypto = require('crypto');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
-/* 各 Body の役割・語数の目安（新テンプレート：役割の異なる4文で1段落 45〜60語） */
-const BODY_ROLE_NAMES = ['因果必然型', '実証型', '譲歩反駁型'];
-
-/* 論点（argument）の3原則。生成・書き換え・論点判定で共有する。 */
+/* 論点（argument）の3原則。各 Body の核となる論点の質を担保する。 */
 const ARGUMENT_PRINCIPLES = `A strong argument follows three principles:
 1. NEUTRAL: it describes WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")
 2. STRUCTURAL: it names a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"
@@ -40,24 +37,10 @@ BODY 3 — Concession-rebuttal mode (防御: "even the counterargument fails"):
   Sentence 3 (Rebuttal): "However, this is not the case, because [why the counterargument fails]." / "However, [the limit of that counterargument]."
   Sentence 4 (Resolution): "Therefore, [why your side prevails]." / "For this reason, [your argument wins]."`;
 
-function buildEssayPrompt(topic, stance, userPoints) {
+function buildEssayPrompt(topic, stance) {
   const stanceText = stance === 'agree'
     ? 'AGREE — support the statement / answer YES'
     : 'DISAGREE — oppose the statement / answer NO';
-  const points = Array.isArray(userPoints) ? userPoints : [];
-  const pointsSection = points.length ? `
-
-USER'S BRAINSTORMED ARGUMENTS (the learner wrote these in 90 seconds BEFORE seeing your answer; they may be in Japanese or English):
-${points.map((p, i) => `${i + 1}. ${p}`).join('\n')}
-
-Tasks for these arguments:
-- Judge each one: is it a valid, distinct, exam-appropriate argument FOR the stance above? Check direction (does it point toward the stance?), and the three argument principles above (neutral / structural / abstract).
-- Report the judgments in a "pointsReview" array (one object per argument, same order). Each comment must be IN JAPANESE, short, and say why it works or how to fix it (mention neutrality/structure/abstraction if that's the issue).
-- If an argument is valid and strong, ADOPT it as one of your three body arguments — rephrase it to satisfy the three principles so the learner sees their own idea turned into a proper English argument.` : '';
-  const bodiesShape = '{"bodies":[{"argument":"...","sentences":["...","...","...","..."],"ja":"..."},{...},{...}]';
-  const jsonShape = points.length
-    ? bodiesShape + ',"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}\n("verdict" must be one of "valid", "weak", "invalid")'
-    : bodiesShape + '}';
   return `You are an expert writing coach for the EIKEN Grade 1 English essay.
 
 TOPIC: ${topic}
@@ -78,10 +61,10 @@ Length constraint (STRICT):
 General rules:
 - Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1.
 - The final consequence of every body must point in the SAME direction as the stance.
-- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph.${pointsSection}
+- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph.
 
 Return ONLY this JSON structure:
-${jsonShape}`;
+{"bodies":[{"argument":"...","sentences":["...","...","...","..."],"ja":"..."},{...},{...}]}`;
 }
 
 function buildThemePrompt(existingTopics) {
@@ -205,39 +188,8 @@ async function callGemini(prompt, apiKey, model, temperature) {
   }
 }
 
-/* 論点だしトレーニングで作った論点を核に、Body 1本を丸ごと書き直すプロンプト */
-function buildRewriteBodyPrompt(topic, stance, bodyIndex, userPoint) {
-  const stanceText = stance === 'agree'
-    ? 'AGREE — support the statement / answer YES'
-    : 'DISAGREE — oppose the statement / answer NO';
-  return `You are an expert writing coach for the EIKEN Grade 1 English essay.
-
-TOPIC: ${topic}
-STANCE: ${stanceText}
-
-The learner wants to rewrite ONE body paragraph built around this argument idea (may be rough, in Japanese or English): "${userPoint}"
-
-This is body number ${bodyIndex + 1}, whose rhetorical role is "${BODY_ROLE_NAMES[bodyIndex]}". Write it as four sentences following that role's fixed architecture:
-${BODY_ARCHITECTURE}
-
-First set the paragraph's core "argument": a substantial noun phrase of 5–8 words. ADOPT the learner's idea as this argument — rephrase it to satisfy the three principles below; don't just copy it verbatim.
-${ARGUMENT_PRINCIPLES}
-
-Length constraint (STRICT):
-- The paragraph must total 45–60 words (roughly four sentences of 12–15 words each).
-
-General rules:
-- Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1.
-- Every sentence is complete: capitalized start, period at the end.
-- The final consequence must point in the SAME direction as the stance.
-- Provide "ja": a natural Japanese translation of the FULL paragraph.
-
-Return ONLY this JSON:
-{"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
-}
-
-/* エッセイの採点・論点判定についてGeminiと会話するためのシステム文脈 */
-function buildChatSystemContext(topic, stance, bodies, evaluation, pointsReview) {
+/* エッセイの採点についてGeminiと会話するためのシステム文脈 */
+function buildChatSystemContext(topic, stance, bodies, evaluation) {
   const paragraphs = assembleEssay(bodies) || [];
   let s = `You are a friendly, encouraging EIKEN Grade 1 English essay writing coach, chatting with a learner about a specific practice essay they are working on.
 
@@ -250,10 +202,6 @@ ${paragraphs.map((p, i) => `${i + 1}. ${p}`).join('\n')}`;
   if (evaluation && typeof evaluation.average === 'number') {
     s += `\n\nEXAMINER SCORES (out of 10): structure ${evaluation.structure}, content ${evaluation.content}, language ${evaluation.language} (average ${evaluation.average}).
 Examiner comments — structure: ${evaluation.comments?.structure || ''} / content: ${evaluation.comments?.content || ''} / language: ${evaluation.comments?.language || ''}`;
-  }
-  if (Array.isArray(pointsReview) && pointsReview.length) {
-    s += `\n\nLEARNER'S BRAINSTORMED ARGUMENTS AND JUDGMENTS:\n` +
-      pointsReview.map((r, i) => `${i + 1}. "${r.point}" — ${r.verdict} (${r.comment})`).join('\n');
   }
   s += `\n\nAnswer the learner's questions IN JAPANESE, concisely (a few sentences unless real detail is needed), in a supportive tone. You may reference specific body paragraphs, scores, or arguments above. Do not regenerate the essay or invent a new template — just discuss and advise.`;
   return s;
@@ -293,32 +241,6 @@ async function callGeminiChat(systemText, turns, apiKey, model) {
   return text.trim();
 }
 
-/* 論点だしトレーニング（生成済みエッセイに対する反復練習）の判定プロンプト */
-function buildReviewPointsPrompt(topic, stance, userPoints, existingReasons) {
-  return `You are an expert coach for the EIKEN Grade 1 English essay brainstorming stage.
-
-TOPIC: ${topic}
-STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
-
-A learner is practicing coming up with THREE distinct arguments for this stance in 90 seconds, in the style "A does B" (a verb-based claim, later nominalized when writing). They may write in Japanese or English. Here are their arguments:
-${userPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}
-
-For reference, here are three model arguments already prepared for this topic (the learner may or may not have seen these before):
-${existingReasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
-
-${ARGUMENT_PRINCIPLES}
-
-For EACH of the learner's arguments, judge:
-- Is it a valid, exam-appropriate argument that supports the stance (correct direction)?
-- Is it clearly distinct from the learner's other arguments?
-- Does it follow the neutral / structural / abstract principles above? If not, say which one is missing.
-- verdict: "valid", "weak" (right idea, underdeveloped, or violates one of the three principles), or "invalid" (wrong direction, off-topic, or not really an argument)
-- comment: ONE short sentence IN JAPANESE explaining the verdict and, if not "valid", how to fix it (mention neutrality/structure/abstraction if that's the issue)
-
-Return ONLY this JSON:
-{"pointsReview":[{"point":"...","verdict":"valid","comment":"..."}]}`;
-}
-
 function keywordMatches(given, expected) {
   const a = Buffer.from(String(given));
   const b = Buffer.from(String(expected));
@@ -329,7 +251,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
-  const { mode, keyword, topic, stance, existingTopics, userPoints } = req.body || {};
+  const { mode, keyword, topic, stance, existingTopics } = req.body || {};
 
   const expected = process.env.APP_KEYWORD;
   if (!expected) {
@@ -355,62 +277,14 @@ module.exports = async (req, res) => {
     if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
       return res.status(400).json({ error: 'topic / stance が不正です' });
     }
-    const points = Array.isArray(userPoints)
-      ? userPoints.map(p => String(p).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
-      : [];
-    const prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance, points);
+    const prompt = buildEssayPrompt(topic.trim().slice(0, 300), stance);
     try {
       const parsed = await callGemini(prompt, apiKey, model);
       const bodies = Array.isArray(parsed.bodies) ? parsed.bodies.slice(0, 3).map(normalizeBody) : [];
       if (bodies.length < 3 || bodies.some(b => !b)) {
         return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
-      return res.status(200).json({ bodies, pointsReview: normalizePointsReview(parsed.pointsReview) });
-    } catch (e) {
-      return res.status(e.status || 502).json({ error: e.message });
-    }
-  }
-
-  if (mode === 'reviewPoints') {
-    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
-      return res.status(400).json({ error: 'topic / stance が不正です' });
-    }
-    const points = Array.isArray(userPoints)
-      ? userPoints.map(p => String(p).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
-      : [];
-    if (!points.length) return res.status(400).json({ error: '論点が入力されていません' });
-    const reasons = Array.isArray(req.body.existingReasons)
-      ? req.body.existingReasons.map(r => String(r).trim().slice(0, 200)).filter(Boolean).slice(0, 3)
-      : [];
-    if (reasons.length < 3) return res.status(400).json({ error: 'existingReasons が不正です' });
-    try {
-      const raw = await callGemini(
-        buildReviewPointsPrompt(topic.trim().slice(0, 300), stance, points, reasons),
-        apiKey, model, 0.3);
-      const review = normalizePointsReview(raw && raw.pointsReview);
-      if (!review || !review.length) return res.status(502).json({ error: '判定結果の形式が不正です' });
-      return res.status(200).json({ pointsReview: review });
-    } catch (e) {
-      return res.status(e.status || 502).json({ error: e.message });
-    }
-  }
-
-  if (mode === 'rewriteBody') {
-    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
-      return res.status(400).json({ error: 'topic / stance が不正です' });
-    }
-    const bi = Number(req.body.bodyIndex);
-    const userPoint = String(req.body.userPoint || '').trim().slice(0, 200);
-    if (!(bi >= 0 && bi <= 2) || !userPoint) {
-      return res.status(400).json({ error: 'rewriteBody の入力が不正です' });
-    }
-    try {
-      const parsed = await callGemini(buildRewriteBodyPrompt(topic.trim().slice(0, 300), stance, bi, userPoint), apiKey, model);
-      const body = normalizeBody(parsed);
-      if (!body) {
-        return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
-      }
-      return res.status(200).json(body);
+      return res.status(200).json({ bodies });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
@@ -434,7 +308,7 @@ module.exports = async (req, res) => {
     const turns = history.concat([{ role: 'user', text: message }]);
     try {
       const systemText = buildChatSystemContext(
-        topic.trim().slice(0, 300), stance, req.body.bodies, req.body.evaluation || null, req.body.pointsReview || null);
+        topic.trim().slice(0, 300), stance, req.body.bodies, req.body.evaluation || null);
       const reply = await callGeminiChat(systemText, turns, apiKey, model);
       return res.status(200).json({ reply });
     } catch (e) {
@@ -469,16 +343,6 @@ module.exports = async (req, res) => {
 
   return res.status(400).json({ error: 'mode が不正です' });
 };
-
-/* ユーザー論点の判定結果を検証・整形する */
-function normalizePointsReview(raw) {
-  if (!Array.isArray(raw)) return null;
-  return raw.slice(0, 3).map(r => ({
-    point: String((r && r.point) || '').slice(0, 200),
-    verdict: ['valid', 'weak', 'invalid'].includes(r && r.verdict) ? r.verdict : 'weak',
-    comment: String((r && r.comment) || '').slice(0, 300),
-  }));
-}
 
 async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
   const raw = await callGemini(buildEvalPrompt(topic, stance, paragraphs), apiKey, model, 0.2);

@@ -49,9 +49,8 @@ function parseBody(b, i) {
   return { argument, sentences, ja: String((b && b.ja) || '').trim() };
 }
 
-async function generateEssaySet(theme, stance, userPoints) {
-  const points = (userPoints || []).map(p => String(p).trim()).filter(Boolean).slice(0, 3);
-  const data = await apiCall({ mode: 'essay', topic: theme.topic, stance, userPoints: points });
+async function generateEssaySet(theme, stance) {
+  const data = await apiCall({ mode: 'essay', topic: theme.topic, stance });
   if (!data || !Array.isArray(data.bodies) || data.bodies.length < 3) {
     throw new Error('生成結果の形式が不正です（Body が3つ揃っていません）');
   }
@@ -65,8 +64,6 @@ async function generateEssaySet(theme, stance, userPoints) {
     createdAt: Date.now(),
     bodies,
     evaluation: data.evaluation || null,
-    userPoints: points,
-    pointsReview: Array.isArray(data.pointsReview) ? data.pointsReview : null,
   };
 }
 
@@ -77,29 +74,7 @@ async function evaluateEssaySet(set) {
   return data.evaluation;
 }
 
-/* 論点だしトレーニングの反復練習（エッセイ本文は変更しない） */
-async function reviewPoints(set, userPoints) {
-  const points = (userPoints || []).map(p => String(p).trim()).filter(Boolean).slice(0, 3);
-  const data = await apiCall({
-    mode: 'reviewPoints',
-    topic: set.topic,
-    stance: set.stance,
-    userPoints: points,
-    existingReasons: set.bodies.map(b => b.argument),
-  });
-  if (!data || !Array.isArray(data.pointsReview) || !data.pointsReview.length) {
-    throw new Error('判定結果の形式が不正です');
-  }
-  return { userPoints: points, pointsReview: data.pointsReview };
-}
-
-/* 論点だしトレーニングで作った論点を核に、Body 1本を丸ごと書き直す */
-async function rewriteBodyWithPoint(set, bodyIndex, userPoint) {
-  const data = await apiCall({ mode: 'rewriteBody', topic: set.topic, stance: set.stance, bodyIndex, userPoint });
-  return parseBody(data, bodyIndex);
-}
-
-/* 採点・論点判定についてGeminiと会話する（履歴は呼び出し側が保持） */
+/* 採点についてGeminiと会話する（履歴は呼び出し側が保持） */
 async function chatWithGemini(set, history, message) {
   const data = await apiCall({
     mode: 'chat',
@@ -107,7 +82,6 @@ async function chatWithGemini(set, history, message) {
     stance: set.stance,
     bodies: set.bodies,
     evaluation: set.evaluation || null,
-    pointsReview: set.pointsReview || null,
     history,
     message,
   });
