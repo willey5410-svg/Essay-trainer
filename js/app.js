@@ -627,7 +627,7 @@ function startDrill(theme) {
     finalists: [], details: {},
     casting: [0, 1, 2], // Body i に割り当てる finalists 配列上の添字
     concession: '',
-    review: null, busy: false, error: null, fillingChanges: false,
+    review: null, busy: false, error: null, fillingChanges: false, fillingScan: false,
     fromHistory: false,
     deadline: Date.now() + DRILL_TOTAL_SECONDS * 1000,
     timerId: null,
@@ -753,17 +753,66 @@ function drillStage2(d) {
       const titleNote = c ? ` — ${c.note}` : '';
       return `<td><button class="dg-cell${c ? ' filled' : ''}" data-action="drill-cell" data-layer="${li}" data-domain="${di}" title="${esc(l.ja)} × ${esc(dom.ja)}${esc(titleNote)}">${mark}${sup}</button></td>`;
     }).join('')}</tr>`).join('')}</tbody></table>`;
-  const chSummary = d.changes.filter(c => c.text.trim()).map((c, i) => `<li>${c.dir === 'inc' ? '📈' : '📉'}${esc(c.text)}<span class="stat"> — ${d.candidates.filter(x => x.changeIdx === i).length}セルで走査済み</span></li>`).join('');
+  const chSummary = d.changes.filter(c => c.text.trim()).map(c => {
+    const realIdx = d.changes.indexOf(c);
+    return `<li>${c.dir === 'inc' ? '📈' : '📉'}${esc(c.text)}<span class="stat"> — ${d.candidates.filter(x => x.changeIdx === realIdx).length}セルで走査済み</span></li>`;
+  }).join('');
   return `<div class="card">
     <h3>Stage 2: マトリクス走査 <span class="stat">候補 ${filled} / 5個以上</span></h3>
-    <p class="hint-text">セルをタップすると、まず<strong>Stage 1のどの変化を問うか</strong>を選び、その変化が「この層のこのドメインにプラスかマイナスか」を機械的に問います。思いつきを待たず、リストを走査して生成します。同じ変化を複数セルで問っても構いません。<strong>両側（賛成に利する／反対に利する）を出す</strong>のがコツです。</p>
+    <p class="hint-text">セルをタップすると、まず<strong>Stage 1のどの変化を問うか</strong>を選び、その変化が「この層のこのドメインにプラスかマイナスか」を機械的に問います。思いつきを待たず、リストを走査して生成します。同じ変化を複数セルで問っても構いません。<strong>両側（賛成に利する／反対に利する）を出す</strong>のがコツです。埋まらないときは Gemini に走査させて構いません。</p>
     <ol class="drill-ch-summary">${chSummary}</ol>
     <div class="dg-wrap">${grid}</div>
+    <div class="row">
+      <button class="btn small ghost" data-action="drill-fill-scan" ${d.fillingScan ? 'disabled' : ''}>${d.fillingScan ? '🤖 Gemini が走査中…' : '🤖 走査をGeminiに埋めてもらう'}</button>
+    </div>
     <div class="row">
       <button class="btn" data-action="drill-to-3" ${filled < 5 ? 'disabled' : ''}>次へ（フィルタ）</button>
       <button class="btn ghost" data-action="drill-back" data-stage="1">← 戻る</button>
     </div>
   </div>`;
+}
+
+/* Stage 2 のマトリクス走査を Gemini に埋めてもらう（既存のセルは残し、空きセルだけ追加） */
+async function doFillDrillScan() {
+  const d = state.drill;
+  if (!d || d.fillingScan) return;
+  const changes = d.changes.filter(c => c.text.trim());
+  if (changes.length < 2) { d.error = '先に増減リストを2件以上入力してください'; render(); return; }
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '走査の生成には合言葉の入力が必要です';
+    render();
+    return;
+  }
+  d.fillingScan = true;
+  d.error = null;
+  render();
+  try {
+    const cells = await generateDrillScan(d.topic, changes);
+    let added = 0;
+    for (const cell of cells) {
+      const li = DRILL_LAYERS.findIndex(l => l.ja === cell.layer);
+      const di = DRILL_DOMAINS.findIndex(dm => dm.ja === cell.domain);
+      if (li < 0 || di < 0) continue;
+      const id = `c${li}-${di}`;
+      if (d.candidates.some(x => x.id === id)) continue; // 自分で埋めたセルは上書きしない
+      const srcChange = changes[(cell.changeIndex || 1) - 1] || changes[0];
+      const changeIdx = d.changes.indexOf(srcChange);
+      d.candidates.push({ id, layer: li, domain: di, note: cell.note, side: cell.side === 'disagree' ? 'disagree' : 'agree', changeIdx: changeIdx >= 0 ? changeIdx : 0 });
+      added++;
+    }
+    if (!added) d.error = 'Gemini の走査結果はすべて既存セルと重複していました';
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      d.error = '走査の生成に失敗しました：' + e.message;
+    }
+  }
+  d.fillingScan = false;
+  render();
 }
 
 /* Stage 3: 立場決定（観点数が多い側）＋3基準フィルタで3つに絞る */
@@ -1438,6 +1487,7 @@ $app.addEventListener('click', (ev) => {
   }
   else if (a === 'drill-add-change') { state.drill.changes.push({ dir: 'inc', text: '' }); render(); }
   else if (a === 'drill-fill-changes') { doFillDrillChanges(); }
+  else if (a === 'drill-fill-scan') { doFillDrillScan(); }
   else if (a === 'drill-del-change') { state.drill.changes.splice(Number(el.dataset.i), 1); render(); }
   else if (a === 'drill-toggle-change') {
     const c = state.drill.changes[Number(el.dataset.i)];

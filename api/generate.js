@@ -164,6 +164,10 @@ function normalizeDrillReview(raw) {
   };
 }
 
+/* ドリルのマトリクス軸（templates.js の DRILL_LAYERS/DRILL_DOMAINS と一致させること） */
+const DRILL_LAYER_NAMES = ['個人', '社会・国家', '世界', '将来世代'];
+const DRILL_DOMAIN_NAMES = ['経済', '健康', '制度', '技術', '環境', '公平', '倫理'];
+
 /* ドリル Stage 1 の増減リストが出せない学習者のために、Gemini に叩き台を作らせるプロンプト */
 function buildDrillChangesPrompt(topic) {
   return `You are a coach for the EIKEN Grade 1 essay brainstorming stage.
@@ -189,6 +193,50 @@ function normalizeDrillChanges(raw) {
     text: String((c && c.text) || '').trim().slice(0, 120),
   })).filter(c => c.text);
   return changes.length ? changes : null;
+}
+
+/* ドリル Stage 2 のマトリクス走査を Gemini に代行させるプロンプト（増減リストを各交点で問う） */
+function buildDrillScanPrompt(topic, changes) {
+  return `You are a coach for the EIKEN Grade 1 essay brainstorming stage.
+The learner is doing a "matrix scan" drill Step 2. From a neutral change list, they must scan a matrix of affected LAYERS × value DOMAINS, asking at each intersection "for THIS layer's THIS domain, does the proposition act as a plus (favoring AGREE) or a minus (favoring DISAGREE)?".
+
+TOPIC: ${topic}
+
+CHANGE LIST (numbered — cite which change each candidate traces back to):
+${changes.map((c, i) => `${i + 1}. [${c.dir === 'dec' ? 'DECREASE' : 'INCREASE'}] ${c.text}`).join('\n')}
+
+LAYERS (choose the exact Japanese name): ${DRILL_LAYER_NAMES.join(' / ')}
+DOMAINS (choose the exact Japanese name): ${DRILL_DOMAIN_NAMES.join(' / ')}
+
+Produce 6 candidate perspectives by scanning changes against intersections. Requirements:
+- Spread them across DIFFERENT layers and DIFFERENT domains (avoid clustering in one row or column).
+- Cover BOTH sides: some candidates must favor AGREE and some must favor DISAGREE, so a stance can later be chosen by count.
+- Each candidate: cite the change it comes from (changeIndex, 1-based), the layer and domain (EXACT Japanese names from the lists above), the side it favors ("agree" or "disagree"), and a note.
+- The note is IN JAPANESE: one short, NEUTRAL, structural phrase describing what happens at that intersection (describe the change, not "who is harmed"), one level more abstract than a narrow anecdote.
+
+Return ONLY this JSON:
+{"cells":[{"changeIndex":1,"layer":"個人","domain":"経済","side":"agree","note":"..."}]}`;
+}
+
+function normalizeDrillScan(raw, nChanges) {
+  if (!raw || !Array.isArray(raw.cells)) return null;
+  const cells = raw.cells.slice(0, 10).map(c => ({
+    changeIndex: Math.max(1, Math.min(nChanges, Number((c && c.changeIndex) || 1))),
+    layer: String((c && c.layer) || '').trim(),
+    domain: String((c && c.domain) || '').trim(),
+    side: c && c.side === 'disagree' ? 'disagree' : 'agree',
+    note: String((c && c.note) || '').trim().slice(0, 200),
+  })).filter(c => c.note && DRILL_LAYER_NAMES.includes(c.layer) && DRILL_DOMAIN_NAMES.includes(c.domain));
+  // 同一セル（層×ドメイン）は先勝ちで一意化
+  const seen = new Set();
+  const out = [];
+  for (const c of cells) {
+    const k = c.layer + '|' + c.domain;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(c);
+  }
+  return out.length ? out : null;
 }
 
 function buildThemePrompt(existingTopics) {
@@ -424,6 +472,24 @@ module.exports = async (req, res) => {
       const changes = normalizeDrillChanges(raw);
       if (!changes) return res.status(502).json({ error: '増減リストの生成に失敗しました' });
       return res.status(200).json({ changes });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'drillScan') {
+    if (typeof topic !== 'string' || !topic.trim()) {
+      return res.status(400).json({ error: 'topic が不正です' });
+    }
+    const changes = (Array.isArray(req.body.changes) ? req.body.changes : []).slice(0, 6)
+      .map(c => ({ dir: c && c.dir === 'dec' ? 'dec' : 'inc', text: String((c && c.text) || '').trim().slice(0, 120) }))
+      .filter(c => c.text);
+    if (changes.length < 2) return res.status(400).json({ error: '増減リストが不足しています' });
+    try {
+      const raw = await callGemini(buildDrillScanPrompt(topic.trim().slice(0, 300), changes), apiKey, model, 0.5);
+      const cells = normalizeDrillScan(raw, changes.length);
+      if (!cells) return res.status(502).json({ error: '走査の生成に失敗しました' });
+      return res.status(200).json({ cells });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

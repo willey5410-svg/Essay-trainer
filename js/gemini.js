@@ -83,6 +83,16 @@ async function generateDrillChanges(topic) {
     .filter(c => c.text);
 }
 
+/* ドリル Stage 2 のマトリクス走査を Gemini に代行してもらう（候補セルを返す） */
+async function generateDrillScan(topic, changes) {
+  const data = await apiCall({
+    mode: 'drillScan', topic,
+    changes: (changes || []).map(c => ({ dir: c.dir === 'dec' ? 'dec' : 'inc', text: String(c.text || '').trim() })),
+  });
+  if (!data || !Array.isArray(data.cells) || !data.cells.length) throw new Error('走査の生成に失敗しました');
+  return data.cells;
+}
+
 /* 観点だしドリル（マトリクス走査）のワークシートを講評してもらう */
 async function reviewDrillWorksheet(payload) {
   const data = await apiCall(Object.assign({ mode: 'reviewDrill' }, payload));
