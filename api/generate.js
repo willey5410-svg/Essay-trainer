@@ -361,6 +361,41 @@ function normalizeEval(raw) {
   return ev;
 }
 
+/* Gemini 429 応答から推奨リトライ秒数を取り出す（details の RetryInfo かメッセージ文字列から） */
+function parseRetrySeconds(body, detail) {
+  try {
+    const details = body && body.error && body.error.details;
+    if (Array.isArray(details)) {
+      for (const d of details) {
+        if (d && typeof d.retryDelay === 'string') {
+          const m = d.retryDelay.match(/([\d.]+)s/);
+          if (m) return Math.ceil(parseFloat(m[1]));
+        }
+      }
+    }
+  } catch (e) { /* ignore */ }
+  const m = String(detail || '').match(/retry in ([\d.]+)s/i);
+  return m ? Math.ceil(parseFloat(m[1])) : null;
+}
+
+/* Gemini の HTTP エラーを、ユーザー向けの日本語メッセージ＋適切な status に変換して投げる */
+async function throwGeminiHttpError(r) {
+  let body = null;
+  try { body = await r.json(); } catch (e) { /* ignore */ }
+  const detail = (body && body.error && body.error.message) || '';
+  if (r.status === 429) {
+    const secs = parseRetrySeconds(body, detail);
+    const err = new Error(secs
+      ? `Gemini の無料利用枠の上限に達しました。約 ${secs} 秒後にもう一度お試しください（短時間の連続利用を控えると回避できます）。`
+      : 'Gemini の無料利用枠の上限に達しました。しばらく待ってからもう一度お試しください。');
+    err.status = 429;
+    throw err;
+  }
+  const err = new Error(`Gemini APIエラー (${r.status}) ${detail}`.trim());
+  err.status = 502;
+  throw err;
+}
+
 async function callGemini(prompt, apiKey, model, temperature) {
   let r;
   try {
@@ -377,13 +412,7 @@ async function callGemini(prompt, apiKey, model, temperature) {
     err.status = 502;
     throw err;
   }
-  if (!r.ok) {
-    let detail = '';
-    try { detail = (await r.json()).error?.message || ''; } catch (e) { /* ignore */ }
-    const err = new Error(`Gemini APIエラー (${r.status}) ${detail}`.trim());
-    err.status = 502;
-    throw err;
-  }
+  if (!r.ok) await throwGeminiHttpError(r);
   const data = await r.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
@@ -436,13 +465,7 @@ async function callGeminiChat(systemText, turns, apiKey, model) {
     err.status = 502;
     throw err;
   }
-  if (!r.ok) {
-    let detail = '';
-    try { detail = (await r.json()).error?.message || ''; } catch (e) { /* ignore */ }
-    const err = new Error(`Gemini APIエラー (${r.status}) ${detail}`.trim());
-    err.status = 502;
-    throw err;
-  }
+  if (!r.ok) await throwGeminiHttpError(r);
   const data = await r.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
