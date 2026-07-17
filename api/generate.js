@@ -378,16 +378,44 @@ function parseRetrySeconds(body, detail) {
   return m ? Math.ceil(parseFloat(m[1])) : null;
 }
 
+/* 429 の QuotaFailure から、超過した枠が「日次」か「分次」かを判定する（不明なら null） */
+function parseQuotaScope(body, detail) {
+  try {
+    const details = body && body.error && body.error.details;
+    if (Array.isArray(details)) {
+      for (const d of details) {
+        if (String((d && d['@type']) || '').includes('QuotaFailure') && Array.isArray(d.violations)) {
+          for (const v of d.violations) {
+            const id = String((v && (v.quotaId || v.quotaMetric)) || '');
+            if (/per\s*day/i.test(id)) return 'day';
+            if (/per\s*minute/i.test(id)) return 'minute';
+          }
+        }
+      }
+    }
+  } catch (e) { /* ignore */ }
+  if (/per\s*day/i.test(String(detail || ''))) return 'day';
+  return null;
+}
+
 /* Gemini の HTTP エラーを、ユーザー向けの日本語メッセージ＋適切な status に変換して投げる */
 async function throwGeminiHttpError(r) {
   let body = null;
   try { body = await r.json(); } catch (e) { /* ignore */ }
   const detail = (body && body.error && body.error.message) || '';
   if (r.status === 429) {
+    const scope = parseQuotaScope(body, detail);
     const secs = parseRetrySeconds(body, detail);
-    const err = new Error(secs
-      ? `Gemini の無料利用枠の上限に達しました。約 ${secs} 秒後にもう一度お試しください（短時間の連続利用を控えると回避できます）。`
-      : 'Gemini の無料利用枠の上限に達しました。しばらく待ってからもう一度お試しください。');
+    let msg;
+    if (scope === 'day') {
+      // 日次上限は待っても回復しない（太平洋時間の日付変更でリセット）。リトライ秒数は誤解を招くので出さない。
+      msg = 'Gemini の「1日あたり」の無料利用枠を使い切りました。無料枠は太平洋時間（PT）の深夜0時にリセットされるため、それまで待っても回復しません。すぐに使うには Google AI Studio で従量課金（有料枠）を有効化してください。';
+    } else if (secs) {
+      msg = `Gemini の「1分あたり」の無料利用枠の上限です。約 ${secs} 秒後にもう一度お試しください（短時間の連続利用を控えると回避できます）。`;
+    } else {
+      msg = 'Gemini の無料利用枠の上限に達しました。少し時間をおいてからお試しください。繰り返す場合は1日あたりの上限の可能性があり、その場合は太平洋時間の日付変更までは回復しません。';
+    }
+    const err = new Error(msg);
     err.status = 429;
     throw err;
   }
