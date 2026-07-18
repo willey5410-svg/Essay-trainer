@@ -168,6 +168,20 @@ function normalizeDrillReview(raw) {
 const DRILL_LAYER_NAMES = ['個人', '社会・国家', '世界', '将来世代'];
 const DRILL_DOMAIN_NAMES = ['経済', '健康', '制度', '技術', '環境', '公平', '倫理'];
 
+/* Gemini が返す層・ドメイン名を、表記ゆれ（「社会・国家」→「社会」等）に強く正規化して
+   既知の正式名に対応づける。対応先が無ければ null。 */
+function canonicalAxisName(list, raw) {
+  const norm = s => String(s || '').replace(/[\s・／/、,，.．\-—]/g, '');
+  const n = norm(raw);
+  if (!n) return null;
+  for (const name of list) if (norm(name) === n) return name;       // 正規化して一致
+  for (const name of list) {                                        // 部分一致（どちらかが他方を含む）
+    const nn = norm(name);
+    if (nn && (nn.includes(n) || n.includes(nn))) return name;
+  }
+  return null;
+}
+
 /* ドリル Stage 1 の増減リストが出せない学習者のために、Gemini に叩き台を作らせるプロンプト */
 function buildDrillChangesPrompt(topic) {
   return `You are a coach for the EIKEN Grade 1 essay brainstorming stage.
@@ -222,11 +236,11 @@ function normalizeDrillScan(raw, nChanges) {
   if (!raw || !Array.isArray(raw.cells)) return null;
   const cells = raw.cells.slice(0, 10).map(c => ({
     changeIndex: Math.max(1, Math.min(nChanges, Number((c && c.changeIndex) || 1))),
-    layer: String((c && c.layer) || '').trim(),
-    domain: String((c && c.domain) || '').trim(),
+    layer: canonicalAxisName(DRILL_LAYER_NAMES, c && c.layer),
+    domain: canonicalAxisName(DRILL_DOMAIN_NAMES, c && c.domain),
     side: c && c.side === 'disagree' ? 'disagree' : 'agree',
     note: String((c && c.note) || '').trim().slice(0, 200),
-  })).filter(c => c.note && DRILL_LAYER_NAMES.includes(c.layer) && DRILL_DOMAIN_NAMES.includes(c.domain));
+  })).filter(c => c.note && c.layer && c.domain);
   // 同一セル（層×ドメイン）は先勝ちで一意化
   const seen = new Set();
   const out = [];
@@ -270,12 +284,12 @@ Return ONLY this JSON:
 function normalizeDrillFilter(raw) {
   if (!raw || !Array.isArray(raw.finalists)) return null;
   const fs = raw.finalists.slice(0, 3).map(f => ({
-    layer: String((f && f.layer) || '').trim(),
-    domain: String((f && f.domain) || '').trim(),
+    layer: canonicalAxisName(DRILL_LAYER_NAMES, f && f.layer),
+    domain: canonicalAxisName(DRILL_DOMAIN_NAMES, f && f.domain),
     mech: String((f && f.mech) || '').trim().slice(0, 300),
     example: String((f && f.example) || '').trim().slice(0, 100),
     vocab: String((f && f.vocab) || '').trim().slice(0, 100),
-  })).filter(f => DRILL_LAYER_NAMES.includes(f.layer) && DRILL_DOMAIN_NAMES.includes(f.domain));
+  })).filter(f => f.layer && f.domain);
   return fs.length ? fs : null;
 }
 
