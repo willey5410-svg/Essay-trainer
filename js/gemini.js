@@ -107,6 +107,15 @@ async function reviewDrillWorksheet(payload) {
   return data.review;
 }
 
+/* Body 2 を実証型／思考実験型に切り替えて再生成する（核となる論点は保持） */
+async function switchBody2Mode(set, targetMode) {
+  const mode = targetMode === 'scenario' ? 'scenario' : 'empirical';
+  const data = await apiCall({ mode: 'switchBody2', topic: set.topic, stance: set.stance, targetMode: mode, argument: set.bodies[1].argument });
+  const body = parseBody(data, 1);
+  body.mode = data.mode === 'scenario' ? 'scenario' : 'empirical';
+  return body;
+}
+
 /* 採点についてGeminiと会話する（履歴は呼び出し側が保持） */
 async function chatWithGemini(set, history, message) {
   const data = await apiCall({

@@ -279,6 +279,40 @@ function normalizeDrillFilter(raw) {
   return fs.length ? fs : null;
 }
 
+/* Body 2 を「実証型」または「思考実験型（事実不要）」で書き直すプロンプト。核となる論点は保持する。 */
+function buildBody2Prompt(topic, stance, targetMode, argument) {
+  const stanceText = stance === 'agree'
+    ? 'AGREE — support the statement / answer YES'
+    : 'DISAGREE — oppose the statement / answer NO';
+  const spec = targetMode === 'scenario'
+    ? `Write BODY 2 in THOUGHT-EXPERIMENT mode — argue by a hypothetical, requiring NO real facts, statistics, or specific real-world examples:
+  1 Claim: "Secondly, [restate the core argument as a claim]."
+  2 Premise: set up a hypothetical — "If [X] were to [happen], ..." / "Suppose that [X] ..."
+  3 Consequence chain: follow it to a decisive end — "..., [Y] could occur, which would ultimately ${stance === 'agree' ? 'benefit [a large value such as public welfare, human potential, or social progress]' : 'harm [a large value such as democracy, public trust, human dignity, or social cohesion]'}."
+  4 Implication: "This shows that [a society-level consequence]." / "For this reason, [the claim holds]."
+  Reason hypothetically; do NOT cite statistics or name specific real events.`
+    : `Write BODY 2 in EMPIRICAL mode:
+  1 Claim: "Secondly, [restate the core argument as a claim]."
+  2 General explanation: "This is because ..." / "[subject] are becoming able to ..."
+  3 Evidence: use the strongest phrase you can honestly support: "Studies have shown that ..." > "experience shows that ..." > "In fact, ..." > "[subject] are already -ing ..." > "These days, we often see ..." > "For example, ..." > "..., such as [a broad example like China, India, developing countries]." NEVER invent statistics or fake proper nouns.
+  4 Implication: "This means that [a society-level consequence]."`;
+  return `You are an expert writing coach for the EIKEN Grade 1 English essay.
+
+TOPIC: ${topic}
+STANCE: ${stanceText}
+
+Rewrite the SECOND body paragraph, KEEPING its core argument: "${argument}".
+${spec}
+
+General rules:
+- Keep the same core "argument" (rephrase into a neutral, structural, one-level-abstract noun phrase of 5–8 words).
+- Exactly FOUR complete sentences, 45–60 words total, CEFR B2–C1, formal written English.
+- Provide "ja": a natural Japanese translation of the full paragraph.
+
+Return ONLY this JSON:
+{"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
+}
+
 function buildThemePrompt(existingTopics) {
   return `You are an expert on the EIKEN Grade 1 English essay test.
 Propose 6 NEW essay topics in the style of real EIKEN Grade 1 prompts (agree/disagree statements or yes/no policy questions).
@@ -549,6 +583,24 @@ module.exports = async (req, res) => {
         return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
       return res.status(200).json({ bodies });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'switchBody2') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const targetMode = req.body.targetMode === 'scenario' ? 'scenario' : 'empirical';
+    const argument = String(req.body.argument || '').trim().slice(0, 200);
+    if (!argument) return res.status(400).json({ error: 'argument が不正です' });
+    try {
+      const parsed = await callGemini(buildBody2Prompt(topic.trim().slice(0, 300), stance, targetMode, argument), apiKey, model);
+      const body = normalizeBody(parsed);
+      if (!body) return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
+      body.mode = targetMode;
+      return res.status(200).json(body);
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

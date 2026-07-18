@@ -11,6 +11,21 @@ const BODY_ROLES = [
   { name: 'Body 3', type: '譲歩反駁型', functions: ['主張', '譲歩', '反駁', '決着'] },
 ];
 
+/* Body 2 は「実証型」と、事実・実例が不要な「思考実験型（仮定法シナリオ）」を切り替えられる */
+const BODY2_VARIANTS = {
+  empirical: { type: '実証型', functions: ['主張', '一般論の説明', '証拠', '含意'] },
+  scenario: { type: '思考実験型', functions: ['主張', '前提設定', '帰結の連鎖', '含意'] },
+};
+
+/* 表示用の役割（Body 2 は body.mode に応じて実証型/思考実験型を返す） */
+function roleForBody(bi, body) {
+  if (bi === 1) {
+    const v = BODY2_VARIANTS[(body && body.mode) || 'empirical'] || BODY2_VARIANTS.empirical;
+    return { name: BODY_ROLES[1].name, type: v.type, functions: v.functions };
+  }
+  return BODY_ROLES[bi] || BODY_ROLES[0];
+}
+
 /* 観点だしドリル（マトリクス走査）の2軸。
    横軸=影響を受ける層、縦軸=価値ドメイン。en はプロンプト用の英語名。 */
 const DRILL_LAYERS = [
@@ -49,6 +64,9 @@ const TEMPLATE_PHRASES = [
   'experience shows that',
   'which would ultimately',
   'thus contributing to',
+  'This shows that',
+  'Suppose that',
+  'were to',
   'will become intolerable',
   'this is not the case',
   'One reason is that',

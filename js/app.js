@@ -39,6 +39,7 @@ let state = {
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
+  switchingBody2: false, // Body 2 の型切り替え中フラグ
   chatSetId: null,
   chatDraft: '',
   chatBusy: false,
@@ -368,13 +369,22 @@ function viewStudy() {
   if (!set) { state.view = 'home'; return viewHome(); }
 
   const bodiesHtml = set.bodies.map((body, bi) => {
-    const role = BODY_ROLES[bi] || BODY_ROLES[0];
+    const role = roleForBody(bi, body);
     const sentences = Array.isArray(body.sentences) ? body.sentences : [];
     const linesHtml = sentences.map((s, si) =>
       `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${renderSentence(s, { bi, si })}</p>`
     ).join('');
     const wc = bodyText(body).split(/\s+/).filter(Boolean).length;
     const jaShown = state.showJa[bi];
+    // Body 2 だけ「実証型 ⇄ 思考実験型」を切り替えられる（実例が浮かばないとき用）
+    let switchBtn = '';
+    if (bi === 1) {
+      const cur = body.mode || 'empirical';
+      const target = cur === 'empirical' ? 'scenario' : 'empirical';
+      const label = state.switchingBody2 ? '🔀 変換中…'
+        : (target === 'scenario' ? '🔀 思考実験型に変える（例が不要）' : '🔀 実証型に戻す');
+      switchBtn = `<button class="btn small ghost" data-action="switch-body2" data-target="${target}" ${state.switchingBody2 ? 'disabled' : ''}>${label}</button>`;
+    }
     return `<div class="card body-card">
       <div class="body-head">
         <h3>${role.name} <span class="badge src">${esc(role.type)}</span>${body.original ? ' <span class="badge src">✍️ 書き換え済み</span>' : ''}</h3>
@@ -384,6 +394,7 @@ function viewStudy() {
       ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
       <div class="row">
         <button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>
+        ${switchBtn}
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
         ${body.original ? `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>` : ''}
       </div>
@@ -411,7 +422,7 @@ function viewStudy() {
 /* 各 Body の観点（argument）を役割ごとに一覧表示する */
 function argSummaryCard(set) {
   const items = set.bodies.map((b, i) => {
-    const role = BODY_ROLES[i] || BODY_ROLES[0];
+    const role = roleForBody(i, b);
     return `<li><span class="arg-role">${role.name}</span> <span class="badge src">${esc(role.type)}</span>
       <div class="arg-text">${esc(b.argument || '（観点未設定）')}</div></li>`;
   }).join('');
@@ -543,7 +554,7 @@ function modalBodyEdit() {
   const set = findSet(be.setId);
   if (!set) return '';
   const body = set.bodies[be.bodyIdx];
-  const role = BODY_ROLES[be.bodyIdx] || BODY_ROLES[0];
+  const role = roleForBody(be.bodyIdx, body);
   const linesHtml = (body.sentences || []).map((s, si) => {
     const inner = String(s).split(TPL_RE).map((seg, gi) => {
       if (gi % 2) return esc(seg); // 定型表現はロック
@@ -591,7 +602,7 @@ function applyBodyEdit() {
     return;
   }
   // 書き換え前の Body をスナップショット（初回のみ）。以降の編集でも真の原文を保持する。
-  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '' };
+  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
   body.sentences = newSentences;
   set.evaluation = null; // 内容が変わったため採点をやり直す
   saveSetsList(sets);
@@ -605,6 +616,50 @@ function applyBodyEdit() {
 /* 合言葉があれば採点をバックグラウンドで走らせる（無ければ「採点する」ボタンから手動実行） */
 function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
+}
+
+/* Body 2 を実証型／思考実験型に切り替えて再生成する（核となる論点は保持・元に戻せる） */
+async function doSwitchBody2(targetMode) {
+  if (state.switchingBody2) return;
+  const set = findSet(state.setId);
+  if (!set) return;
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '型の切り替えには合言葉の入力が必要です';
+    render();
+    return;
+  }
+  state.switchingBody2 = true;
+  state.error = null;
+  render();
+  try {
+    const nb = await switchBody2Mode(set, targetMode);
+    const sets = getSets();
+    const s2 = sets.find(s => s.id === set.id);
+    const body = s2.bodies[1];
+    if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
+    body.argument = nb.argument;
+    body.sentences = nb.sentences;
+    body.ja = nb.ja;
+    body.mode = nb.mode;
+    s2.evaluation = null; // 内容が変わったため採点をやり直す
+    saveSetsList(sets);
+    state.notice = `Body 2 を${nb.mode === 'scenario' ? '思考実験型（例が不要）' : '実証型'}に変えました。再採点します。`;
+    state.switchingBody2 = false;
+    render();
+    autoRescore(s2.id);
+    return;
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+    } else {
+      state.error = '型の切り替えに失敗しました：' + e.message;
+    }
+  }
+  state.switchingBody2 = false;
+  render();
 }
 
 /* ---------- 観点だしドリル（マトリクス走査） ----------
@@ -1669,6 +1724,7 @@ $app.addEventListener('click', (ev) => {
     }
   }
   else if (a === 'body-edit-save') { applyBodyEdit(); }
+  else if (a === 'switch-body2') { doSwitchBody2(el.dataset.target); }
   else if (a === 'undo-body') {
     const bi = Number(el.dataset.body);
     const sets = getSets();
@@ -1678,6 +1734,7 @@ $app.addEventListener('click', (ev) => {
       body.argument = body.original.argument;
       body.sentences = body.original.sentences;
       body.ja = body.original.ja;
+      body.mode = body.original.mode;
       delete body.original;
       set.evaluation = null; // 内容が変わったため採点をやり直す
       saveSetsList(sets);
