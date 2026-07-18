@@ -410,6 +410,7 @@ function viewStudy() {
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
       <div class="row">
         ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
+        ${set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
     </div>
@@ -1160,9 +1161,11 @@ async function doDrillJudge() {
     });
     d.review = review;
     // 記録を保存（履歴から再閲覧・エッセイ生成できる形で自己完結させる）
+    const recordId = 'drill-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    d.recordId = recordId; // 生成したエッセイから元ドリルへ辿れるようにする
     const drills = getDrills();
     drills.unshift({
-      id: 'drill-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      id: recordId,
       topic: d.topic, topicJa: d.topicJa, createdAt: Date.now(),
       stance: d.stance,
       changes: d.changes.filter(c => c.text),
@@ -1209,9 +1212,10 @@ function doDrillEssay() {
   const worksheet = drillWorksheetFromFinalists(finalists, d.casting, concessionNote);
   const theme = { topic: d.topic, topicJa: d.topicJa };
   const stance = d.stance;
+  const drillId = d.recordId || null;
   stopDrillTimer();
   state.drill = null;
-  doGenerateEssay(theme, stance, worksheet);
+  doGenerateEssay(theme, stance, worksheet, drillId);
 }
 
 /* 講評済みドリル記録を履歴から Stage 5 表示用に読み込む */
@@ -1225,6 +1229,7 @@ function openDrillRecord(id) {
     stance: rec.stance,
     review: rec.review, busy: false, error: null,
     fillingChanges: false, fillingScan: false, fillingFilter: false,
+    recordId: rec.id, // 生成したエッセイからこの記録へ辿れるようにする
     deadline: 0, timerId: null,
   };
   // 保存済みの finalist（layer/domain 名＋①②③）を候補ID＋details に復元し、全ステージを見返せる形に戻す
@@ -1445,7 +1450,7 @@ function regenerateEssay(setId) {
   doGenerateEssay({ topic: set.topic, topicJa: set.topicJa }, set.stance);
 }
 
-async function doGenerateEssay(theme, stance, worksheet) {
+async function doGenerateEssay(theme, stance, worksheet, drillId) {
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
     state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
@@ -1460,6 +1465,7 @@ async function doGenerateEssay(theme, stance, worksheet) {
   render();
   try {
     const set = await generateEssaySet(theme, stance, worksheet);
+    if (drillId) set.drillId = drillId; // 元ドリルへのリンク
     const sets = getSets();
     sets.unshift(set);
     saveSetsList(sets);
@@ -1615,7 +1621,8 @@ $app.addEventListener('click', (ev) => {
     if (theme) startDrill(theme);
   }
   else if (a === 'drill-quit') {
-    if (state.drill && state.drill.stage < 5 && !confirm('ドリルを中止しますか？（入力内容は破棄されます）')) return;
+    // 講評前（未保存）のみ破棄確認。講評済み＝保存済みなので確認不要
+    if (state.drill && !state.drill.review && state.drill.stage < 5 && !confirm('ドリルを中止しますか？（入力内容は破棄されます）')) return;
     stopDrillTimer();
     state.drill = null;
     state.view = 'home';
@@ -1700,6 +1707,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'drill-judge') { doDrillJudge(); }
   else if (a === 'drill-essay') { doDrillEssay(); }
   else if (a === 'drill-open') { openDrillRecord(el.dataset.id); }
+  else if (a === 'open-essay-drill') { openDrillRecord(el.dataset.id); }
   else if (a === 'drill-delete') {
     if (confirm('このドリル記録を削除しますか？')) {
       saveDrills(getDrills().filter(x => x.id !== el.dataset.id));
