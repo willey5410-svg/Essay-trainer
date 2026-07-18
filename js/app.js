@@ -658,10 +658,14 @@ function stopDrillTimer() {
   if (state.drill && state.drill.timerId) { clearInterval(state.drill.timerId); state.drill.timerId = null; }
 }
 
-function drillStageBar(stage) {
+/* clickable=true のとき各ステージを押して移動できる（講評済みのドリルで各記入ページを見返す用） */
+function drillStageBar(stage, clickable) {
   const names = ['増減', '走査', 'フィルタ', '配役', '講評'];
-  return `<div class="drill-stages">${names.map((n, i) =>
-    `<span class="drill-stage${i + 1 === stage ? ' cur' : ''}${i + 1 < stage ? ' done' : ''}">${i + 1} ${n}</span>`).join('<span class="drill-arrow">→</span>')}</div>`;
+  return `<div class="drill-stages">${names.map((n, i) => {
+    const cls = `drill-stage${i + 1 === stage ? ' cur' : ''}${i + 1 < stage ? ' done' : ''}${clickable ? ' clickable' : ''}`;
+    const attrs = clickable ? ` data-action="drill-goto" data-stage="${i + 1}" title="このステージを見返す"` : '';
+    return `<span class="${cls}"${attrs}>${i + 1} ${n}</span>`;
+  }).join('<span class="drill-arrow">→</span>')}</div>`;
 }
 
 function viewDrill() {
@@ -674,17 +678,20 @@ function viewDrill() {
   else if (d.stage === 3) stageHtml = drillStage3(d);
   else if (d.stage === 4) stageHtml = drillStage4(d);
   else stageHtml = drillStage5(d);
+  const done = !!d.review; // 講評済み＝完了。タイマーは止める
+  const navigable = done && !d.fromHistory; // 各ステージを押して見返せる（データが完全なとき）
   return `<header class="topbar">
-      <button class="btn ghost" data-action="drill-quit">← 中止</button>
+      <button class="btn ghost" data-action="drill-quit">${done ? '← ホームへ' : '← 中止'}</button>
       <span class="topbar-title">🧠 観点だしドリル</span>
-      <span id="drillTimer" class="drill-timer">${fmtClock(Math.max(0, Math.ceil((d.deadline - Date.now()) / 1000)))}</span>
+      ${done ? '<span class="drill-timer">✓ 完了</span>' : `<span id="drillTimer" class="drill-timer">${fmtClock(Math.max(0, Math.ceil((d.deadline - Date.now()) / 1000)))}</span>`}
     </header>
     ${banner()}
     <div class="topic-head">
       <h2>${esc(d.topic)}</h2>
-      <p class="set-sub">${esc(d.topicJa)}${guide ? ` <span class="stat">このステージの目安 ${fmtClock(guide)}</span>` : ''}</p>
+      <p class="set-sub">${esc(d.topicJa)}${!done && guide ? ` <span class="stat">このステージの目安 ${fmtClock(guide)}</span>` : ''}</p>
     </div>
-    ${drillStageBar(d.stage)}
+    ${drillStageBar(d.stage, navigable)}
+    ${navigable ? '<p class="hint-text">各ステージ名を押すと、その記入内容を見返せます。編集して再判定することもできます。</p>' : ''}
     ${d.error ? `<p class="field-error">${esc(d.error)}</p>` : ''}
     ${stageHtml}`;
 }
@@ -1156,16 +1163,41 @@ function doDrillEssay() {
 function openDrillRecord(id) {
   const rec = getDrills().find(x => x.id === id);
   if (!rec) return;
-  state.drill = {
-    stage: 5,
+  const candidates = rec.candidates || [];
+  const base = {
     topic: rec.topic, topicJa: rec.topicJa,
-    changes: rec.changes, candidates: rec.candidates || [],
+    changes: rec.changes || [], candidates,
     stance: rec.stance,
-    // 履歴では finalists を保存済みの詳細オブジェクトのまま持つ（fromHistory=true が目印）
-    finalists: rec.finalists, details: {}, casting: rec.casting, concession: rec.concession,
     review: rec.review, busy: false, error: null,
-    fromHistory: true, deadline: Date.now(), timerId: null,
+    fillingChanges: false, fillingScan: false, fillingFilter: false,
+    deadline: 0, timerId: null,
   };
+  // 保存済みの finalist（layer/domain 名＋①②③）を候補ID＋details に復元し、全ステージを見返せる形に戻す
+  const finalistIds = [];
+  const details = {};
+  let mapped = Array.isArray(rec.finalists) && rec.finalists.length > 0;
+  for (const f of (rec.finalists || [])) {
+    const li = DRILL_LAYERS.findIndex(l => l.ja === f.layer);
+    const di = DRILL_DOMAINS.findIndex(dm => dm.ja === f.domain);
+    const cand = candidates.find(c => c.layer === li && c.domain === di);
+    if (!cand) { mapped = false; break; }
+    finalistIds.push(cand.id);
+    details[cand.id] = { mech: f.mech || '', example: f.example || '', vocab: f.vocab || '' };
+  }
+  if (mapped) {
+    const conc = rec.concession ? candidates.find(c => c.note === rec.concession) : null;
+    state.drill = Object.assign(base, {
+      stage: 5, finalists: finalistIds, details,
+      casting: (rec.casting || [0, 1, 2]).slice(), concession: conc ? conc.id : '',
+      fromHistory: false, // セッション形式に復元済み → 各ステージがそのまま機能する
+    });
+  } else {
+    // 復元に失敗した古い記録は従来どおり Stage 5 のみ閲覧（fromHistory=true）
+    state.drill = Object.assign(base, {
+      stage: 5, finalists: rec.finalists, details: {},
+      casting: rec.casting, concession: rec.concession, fromHistory: true,
+    });
+  }
   state.view = 'drill';
   render();
 }
@@ -1551,6 +1583,7 @@ $app.addEventListener('click', (ev) => {
   }
   else if (a === 'drill-to-2') { drillGoStage2(); }
   else if (a === 'drill-back') { state.drill.error = null; state.drill.stage = Number(el.dataset.stage); render(); }
+  else if (a === 'drill-goto') { state.drill.error = null; state.drill.stage = Number(el.dataset.stage); render(); }
   else if (a === 'drill-cell') {
     const layer = Number(el.dataset.layer), domain = Number(el.dataset.domain);
     const c = state.drill.candidates.find(x => x.layer === layer && x.domain === domain);
