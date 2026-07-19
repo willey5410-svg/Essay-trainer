@@ -107,6 +107,16 @@ async function reviewDrillWorksheet(payload) {
   return data.review;
 }
 
+/* 学習者が指定した観点を核に、Body N を役割を保ったまま書き直す */
+async function rewriteBodyWithPoint(set, bodyIndex, point) {
+  // Body 2 の型（実証/思考実験）は bodyMode として送る（dispatch 用の mode と衝突させない）
+  const bodyMode = bodyIndex === 1 ? (set.bodies[1].mode || 'empirical') : undefined;
+  const data = await apiCall({ mode: 'rewriteBody', topic: set.topic, stance: set.stance, bodyIndex, point, bodyMode });
+  const body = parseBody(data, bodyIndex);
+  if (bodyIndex === 1) body.mode = data.mode === 'scenario' ? 'scenario' : (set.bodies[1].mode || 'empirical');
+  return body;
+}
+
 /* Body 2 を実証型／思考実験型に切り替えて再生成する（核となる論点は保持） */
 async function switchBody2Mode(set, targetMode) {
   const mode = targetMode === 'scenario' ? 'scenario' : 'empirical';

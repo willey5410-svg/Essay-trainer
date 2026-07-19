@@ -1,5 +1,9 @@
 /* 英検1級 Essay Trainer — メインアプリ */
 
+/* 機能スイッチ：観点だしドリルの公開可否。false にするとコードは残したまま
+   全入口（ホームのドリル欄・履歴、エッセイからの導線）を隠して非公開にできる。 */
+const DRILL_ENABLED = false;
+
 const LS = {
   keyword: 'et.keyword',
   sets: 'et.sets',
@@ -39,6 +43,7 @@ let state = {
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
+  bodyRewrite: null,     // {setId, bodyIdx, text, busy, error} 指定観点での書き直し
   switchingBody2: false, // Body 2 の型切り替え中フラグ
   chatSetId: null,
   chatDraft: '',
@@ -272,6 +277,7 @@ function render() {
   if (state.modal === 'keyword') html += modalKeyword();
   if (state.modal === 'themeAdd') html += modalThemeAdd();
   if (state.modal === 'bodyEdit') html += modalBodyEdit();
+  if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
   if (state.modal === 'drillCell') html += modalDrillCell();
   if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
@@ -341,7 +347,7 @@ function viewHome() {
       <h2>📚 学習中のエッセイ</h2>
       ${setItems}
     </section>
-    <section>
+    ${DRILL_ENABLED ? `<section>
       <h2>🧠 観点だしドリル（マトリクス走査）</h2>
       <div class="card">
         <p class="hint-text">「増減リスト → 4層×7ドメイン走査 → 3基準フィルタ → 配役」を5分で回す反復練習です。立場は走査の結果から決めます。</p>
@@ -349,7 +355,7 @@ function viewHome() {
         <div class="row"><button class="btn" data-action="drill-start">▶ ドリルを開始</button></div>
       </div>
       ${drillHistoryHtml()}
-    </section>
+    </section>` : ''}
     <section>
       <h2>✨ 新しいテーマを選ぶ</h2>
       <p class="hint-text">テーマを選ぶと賛成/反対を選択後、Gemini が Body 1〜3 の例文を生成します。</p>
@@ -394,6 +400,7 @@ function viewStudy() {
       ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
       <div class="row">
         <button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>
+        <button class="btn small ghost" data-action="open-rewrite-body" data-body="${bi}">🔁 観点を指定して書き直す</button>
         ${switchBtn}
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
         ${body.original ? `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>` : ''}
@@ -411,7 +418,7 @@ function viewStudy() {
       <div class="row">
         <button class="btn small ghost" data-action="copy-essay" data-id="${esc(set.id)}">📋 全文コピー</button>
         ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
-        ${set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
+        ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
     </div>
@@ -648,6 +655,76 @@ async function doCopyEssay(setId) {
   }
   state.error = ok ? null : 'コピーできませんでした。本文を長押し（右クリック）で選択してください。';
   state.notice = ok ? 'Body 1〜3 の全文をコピーしました' : null;
+  render();
+}
+
+/* 指定観点での Body 書き直しモーダル */
+function modalBodyRewrite() {
+  const br = state.bodyRewrite;
+  if (!br) return '';
+  const set = findSet(br.setId);
+  if (!set) return '';
+  const role = roleForBody(br.bodyIdx, set.bodies[br.bodyIdx]);
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>🔁 ${role.name}（${esc(role.type)}）を観点で書き直す</h3>
+      <p class="hint-text">この Body の核にしたい観点を入力してください（日本語でもOK）。${role.name} の役割（<strong>${esc(role.type)}</strong>）は保ったまま、その観点で書き直します。</p>
+      <input type="text" id="rewritePointInput" value="${esc(br.text)}" placeholder="例：AIが人間の意思決定を代替する" ${br.busy ? 'disabled' : ''}>
+      ${br.error ? `<p class="field-error">${esc(br.error)}</p>` : ''}
+      <div class="row">
+        <button class="btn" data-action="rewrite-body-submit" ${br.busy ? 'disabled' : ''}>${br.busy ? 'Gemini が書き直し中…' : 'この観点で書き直す'}</button>
+        <button class="btn ghost" data-action="close-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doRewriteBody() {
+  const br = state.bodyRewrite;
+  if (!br || br.busy) return;
+  const input = document.getElementById('rewritePointInput');
+  if (input) br.text = input.value;
+  const point = (br.text || '').trim();
+  if (!point) { br.error = '観点を入力してください'; render(); return; }
+  if (!localStorage.getItem(LS.keyword)) {
+    state.modal = 'keyword';
+    state.keywordError = '書き直しには合言葉の入力が必要です';
+    render();
+    return;
+  }
+  br.busy = true;
+  br.error = null;
+  render();
+  try {
+    const nb = await rewriteBodyWithPoint(findSet(br.setId), br.bodyIdx, point);
+    const sets = getSets();
+    const s2 = sets.find(s => s.id === br.setId);
+    const body = s2.bodies[br.bodyIdx];
+    if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
+    body.argument = nb.argument;
+    body.sentences = nb.sentences;
+    body.ja = nb.ja;
+    if (br.bodyIdx === 1) body.mode = nb.mode;
+    s2.evaluation = null; // 内容が変わったため採点をやり直す
+    saveSetsList(sets);
+    state.modal = null;
+    state.bodyRewrite = null;
+    state.notice = `${(BODY_ROLES[br.bodyIdx] || {}).name || 'Body'} をあなたの観点で書き直しました。再採点します。`;
+    render();
+    autoRescore(s2.id);
+    return;
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
+      state.bodyRewrite = null;
+      render();
+      return;
+    }
+    br.error = '書き直しに失敗しました：' + e.message;
+  }
+  br.busy = false;
   render();
 }
 
@@ -1644,6 +1721,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
     state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
+    state.bodyRewrite = null;
     render();
   }
   /* ---- 観点だしドリル ---- */
@@ -1765,6 +1843,17 @@ $app.addEventListener('click', (ev) => {
   }
   else if (a === 'body-edit-save') { applyBodyEdit(); }
   else if (a === 'switch-body2') { doSwitchBody2(el.dataset.target); }
+  else if (a === 'open-rewrite-body') {
+    const bi = Number(el.dataset.body);
+    const set = findSet(state.setId);
+    if (!set) return;
+    state.bodyRewrite = { setId: set.id, bodyIdx: bi, text: '', busy: false, error: null };
+    state.modal = 'bodyRewrite';
+    render();
+    const inp = document.getElementById('rewritePointInput');
+    if (inp) inp.focus();
+  }
+  else if (a === 'rewrite-body-submit') { doRewriteBody(); }
   else if (a === 'undo-body') {
     const bi = Number(el.dataset.body);
     const sets = getSets();
@@ -1886,6 +1975,9 @@ $app.addEventListener('keydown', (ev) => {
     const btn = $app.querySelector('[data-action="drill-cell-save"]');
     if (btn) btn.click();
   }
+  if (ev.key === 'Enter' && ev.target.id === 'rewritePointInput') {
+    doRewriteBody();
+  }
 });
 
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
@@ -1905,6 +1997,7 @@ $app.addEventListener('input', (ev) => {
     state.drill.details[cid][ev.target.dataset.f] = ev.target.value;
   }
   if (ev.target.id === 'dcNote' && state.cellDraft) state.cellDraft.note = ev.target.value;
+  if (ev.target.id === 'rewritePointInput' && state.bodyRewrite) state.bodyRewrite.text = ev.target.value;
 });
 
 // ドリルのセレクト（配役・譲歩素材）を state に同期

@@ -327,6 +327,53 @@ Return ONLY this JSON:
 {"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
 }
 
+/* 学習者が指定した観点を核に、Body N を役割を保ったまま書き直すプロンプト */
+function buildRewriteBodyPrompt(topic, stance, bodyIndex, point, mode) {
+  const stanceText = stance === 'agree'
+    ? 'AGREE — support the statement / answer YES'
+    : 'DISAGREE — oppose the statement / answer NO';
+  let roleSpec;
+  if (bodyIndex === 0) {
+    roleSpec = `Role: BODY 1 — Causal-necessity. Four sentences:
+  1 Claim: "First of all, [the argument] inevitably leads to [a consequence]."
+  2 Mechanism: "As [one change occurs], [a linked change] also grows / will fail."
+  3 Escalation: "Sooner or later, [a worse consequence]." (or "In fact, [real backing].")
+  4 Stakes: "This burden on [group] will become intolerable." / "This will greatly benefit [group]."`;
+  } else if (bodyIndex === 2) {
+    roleSpec = `Role: BODY 3 — Concession-rebuttal. Four sentences:
+  1 Claim: "Finally, [claim]."
+  2 Concession: "It is true that [a counterargument]." / "While some may argue that [counterargument],"
+  3 Rebuttal: "However, this is not the case, because [why it fails]." / "However, [its limit]."
+  4 Resolution: "Therefore, [why your side prevails]."`;
+  } else if (mode === 'scenario') {
+    roleSpec = `Role: BODY 2 — Thought-experiment (NO real facts, statistics, or specific real examples). Four sentences:
+  1 Claim: "Secondly, [claim]."
+  2 Premise: "If [X] were to [happen], ..." / "Suppose that [X] ..."
+  3 Consequence: "..., which would ultimately ${stance === 'agree' ? 'benefit [a large value]' : 'harm [a large value such as democracy or public trust]'}."
+  4 Implication: "This shows that [a society-level consequence]." Reason hypothetically.`;
+  } else {
+    roleSpec = `Role: BODY 2 — Empirical. Four sentences:
+  1 Claim: "Secondly, [claim]."
+  2 Explanation: "This is because ..." / "[subject] are becoming able to ..."
+  3 Evidence: strongest honest of "Studies have shown that" > "experience shows that" > "In fact," > "already -ing" > "These days, we often see" > "For example," > "such as [China/India/developing countries]"; NEVER invent statistics.
+  4 Implication: "This means that [a society-level consequence]."`;
+  }
+  return `You are an expert writing coach for the EIKEN Grade 1 English essay.
+
+TOPIC: ${topic}
+STANCE: ${stanceText}
+
+Rewrite body ${bodyIndex + 1} so that its CORE ARGUMENT is the learner's own point (may be Japanese or rough English): "${point}".
+ADOPT this point as the argument — rephrase it into a neutral, structural, one-level-abstract noun phrase of 5–8 words (keep its meaning; don't copy verbatim).
+
+${roleSpec}
+
+Rules: exactly FOUR complete sentences, 45–60 words total, CEFR B2–C1, formal written English. The final consequence must point in the SAME direction as the stance. Provide "ja": a natural Japanese translation of the full paragraph.
+
+Return ONLY this JSON:
+{"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
+}
+
 function buildThemePrompt(existingTopics) {
   return `You are an expert on the EIKEN Grade 1 English essay test.
 Propose 6 NEW essay topics in the style of real EIKEN Grade 1 prompts (agree/disagree statements or yes/no policy questions).
@@ -597,6 +644,27 @@ module.exports = async (req, res) => {
         return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
       }
       return res.status(200).json({ bodies });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'rewriteBody') {
+    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
+      return res.status(400).json({ error: 'topic / stance が不正です' });
+    }
+    const bi = Number(req.body.bodyIndex);
+    const point = String(req.body.point || '').trim().slice(0, 200);
+    const bodyMode = req.body.bodyMode === 'scenario' ? 'scenario' : 'empirical';
+    if (!(bi >= 0 && bi <= 2) || !point) {
+      return res.status(400).json({ error: 'rewriteBody の入力が不正です' });
+    }
+    try {
+      const parsed = await callGemini(buildRewriteBodyPrompt(topic.trim().slice(0, 300), stance, bi, point, bodyMode), apiKey, model);
+      const body = normalizeBody(parsed);
+      if (!body) return res.status(502).json({ error: '生成結果の形式が不正です（本文が揃っていません）' });
+      if (bi === 1) body.mode = bodyMode; // Body 2 は現在の型を維持
+      return res.status(200).json(body);
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
