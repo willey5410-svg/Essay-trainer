@@ -409,6 +409,7 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
       <div class="row">
+        <button class="btn small ghost" data-action="copy-essay" data-id="${esc(set.id)}">📋 全文コピー</button>
         ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
         ${set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
@@ -617,6 +618,37 @@ function applyBodyEdit() {
 /* 合言葉があれば採点をバックグラウンドで走らせる（無ければ「採点する」ボタンから手動実行） */
 function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
+}
+
+/* Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする */
+async function doCopyEssay(setId) {
+  const set = findSet(setId);
+  if (!set) return;
+  const text = set.bodies.map(b => bodyText(b)).filter(Boolean).join('\n\n');
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }
+  } catch (e) { ok = false; }
+  if (!ok) {
+    // クリップボードAPIが使えない環境（非HTTPS等）向けのフォールバック
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) { ok = false; }
+  }
+  state.error = ok ? null : 'コピーできませんでした。本文を長押し（右クリック）で選択してください。';
+  state.notice = ok ? 'Body 1〜3 の全文をコピーしました' : null;
+  render();
 }
 
 /* Body 2 を実証型／思考実験型に切り替えて再生成する（核となる論点は保持・元に戻せる） */
@@ -1814,6 +1846,7 @@ $app.addEventListener('click', (ev) => {
     localStorage.setItem(LS.dirty, '1');
     cloudFlush().then(() => { if (state.modal === 'settings') render(); });
   }
+  else if (a === 'copy-essay') { doCopyEssay(el.dataset.id); }
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
   else if (a === 'open-chat') {
