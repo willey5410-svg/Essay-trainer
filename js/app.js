@@ -1535,6 +1535,7 @@ async function runBackgroundEvaluation(setId) {
   if (state.evaluatingSetId) return;
   state.evaluatingSetId = setId;
   if (state.view === 'study' && state.setId === setId) render();
+  let failure = null;
   try {
     const set = findSet(setId);
     if (set) {
@@ -1544,10 +1545,22 @@ async function runBackgroundEvaluation(setId) {
       if (s2) { s2.evaluation = evaluation; saveSetsList(sets); }
     }
   } catch (e) {
-    // 採点は付加機能のため、失敗時は静かに諦める（「採点する」ボタンから再試行できる）
+    failure = e;
   }
   state.evaluatingSetId = null;
+  // 失敗時は静かに諦めず、理由を伝える（合言葉切れ・クオータ超過などで
+  // 「採点する」を押しても画面が変わらない、という状態を防ぐ）
+  if (failure) {
+    if (failure.code === 'UNAUTHORIZED') {
+      localStorage.removeItem(LS.keyword);
+      state.modal = 'keyword';
+      state.keywordError = '採点には合言葉が必要です。もう一度入力してください。';
+    } else {
+      state.error = '採点に失敗しました：' + failure.message;
+    }
+  }
   if (state.view === 'study' && state.setId === setId) render();
+  else if (failure) render();
 }
 
 /* 同じテーマ・スタンスで作り直す（現在の構成は削除して差し替える） */
