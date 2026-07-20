@@ -43,6 +43,7 @@ let state = {
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
   readingSetId: null,    // 全文読み上げ中のセットID（Web Speech API）
+  readingPass: 0,        // 読み上げの現在の周回数（1〜READ_REPEAT）
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
   bodyRewrite: null,     // {setId, bodyIdx, text, busy, error} 指定観点での書き直し
   switchingBody2: false, // Body 2 の型切り替え中フラグ
@@ -417,7 +418,7 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
       <div class="row">
-        ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? '⏹ 読み上げを停止' : '🔊 全文読み上げ'}</button>` : ''}
+        ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${READ_REPEAT}）` : `🔊 全文読み上げ（${READ_REPEAT}回）`}</button>` : ''}
         ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
         ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
@@ -628,14 +629,19 @@ function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
 }
 
+/* 読み上げの繰り返し回数（全文を通しで何回読むか） */
+const READ_REPEAT = 10;
+
 /* 読み上げを停止する（Web Speech API のキューを破棄） */
 function stopReading() {
   try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
   state.readingSetId = null;
+  state.readingPass = 0;
 }
 
-/* Body 1〜3 の全文を英語で読み上げる。読み上げ中に再度押すと停止（トグル）。
-   長文が途中で切れるブラウザ対策として、文単位に分割して順に読む。 */
+/* Body 1〜3 の全文を英語で READ_REPEAT 回くり返し読み上げる。読み上げ中に
+   再度押すと停止（トグル）。長文が途中で切れるブラウザ対策として、文単位に
+   分割して順に読む。 */
 function doReadEssay(setId) {
   const synth = window.speechSynthesis;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
@@ -663,15 +669,26 @@ function doReadEssay(setId) {
 
   synth.cancel(); // 念のため既存キューを破棄
   state.readingSetId = setId;
+  state.readingPass = 1; // 現在何周目か（1〜READ_REPEAT）
   state.error = null;
   render();
 
   let idx = 0;
+  let pass = 1;
   const speakNext = () => {
     // ユーザーが停止した／別セットに切り替わったら中断
-    if (state.readingSetId !== setId || idx >= sentences.length) {
-      if (state.readingSetId === setId) { state.readingSetId = null; render(); }
-      return;
+    if (state.readingSetId !== setId) return;
+    if (idx >= sentences.length) {
+      if (pass >= READ_REPEAT) { // 全周終了
+        state.readingSetId = null;
+        state.readingPass = 0;
+        render();
+        return;
+      }
+      pass += 1; // 次の周へ
+      idx = 0;
+      state.readingPass = pass;
+      render();
     }
     const u = new SpeechSynthesisUtterance(sentences[idx++]);
     u.lang = 'en-US';
@@ -679,7 +696,7 @@ function doReadEssay(setId) {
     u.rate = 0.95;
     u.onend = speakNext;
     u.onerror = () => {
-      if (state.readingSetId === setId) { state.readingSetId = null; render(); }
+      if (state.readingSetId === setId) { state.readingSetId = null; state.readingPass = 0; render(); }
     };
     synth.speak(u);
   };
