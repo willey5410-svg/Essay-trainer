@@ -42,6 +42,7 @@ let state = {
   notice: null,
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
+  readingSetId: null,    // 全文読み上げ中のセットID（Web Speech API）
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
   bodyRewrite: null,     // {setId, bodyIdx, text, busy, error} 指定観点での書き直し
   switchingBody2: false, // Body 2 の型切り替え中フラグ
@@ -416,7 +417,7 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
       <div class="row">
-        <button class="btn small ghost" data-action="copy-essay" data-id="${esc(set.id)}">📋 全文コピー</button>
+        ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? '⏹ 読み上げを停止' : '🔊 全文読み上げ'}</button>` : ''}
         ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
         ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
@@ -627,35 +628,62 @@ function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
 }
 
-/* Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする */
-async function doCopyEssay(setId) {
+/* 読み上げを停止する（Web Speech API のキューを破棄） */
+function stopReading() {
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  state.readingSetId = null;
+}
+
+/* Body 1〜3 の全文を英語で読み上げる。読み上げ中に再度押すと停止（トグル）。
+   長文が途中で切れるブラウザ対策として、文単位に分割して順に読む。 */
+function doReadEssay(setId) {
+  const synth = window.speechSynthesis;
+  if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+    state.error = 'このブラウザは読み上げ（音声合成）に対応していません。';
+    render();
+    return;
+  }
+  if (state.readingSetId) { // すでに読み上げ中 → 停止
+    stopReading();
+    render();
+    return;
+  }
   const set = findSet(setId);
   if (!set) return;
-  const text = set.bodies.map(b => bodyText(b)).filter(Boolean).join('\n\n');
-  let ok = false;
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      ok = true;
-    }
-  } catch (e) { ok = false; }
-  if (!ok) {
-    // クリップボードAPIが使えない環境（非HTTPS等）向けのフォールバック
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-    } catch (e) { ok = false; }
-  }
-  state.error = ok ? null : 'コピーできませんでした。本文を長押し（右クリック）で選択してください。';
-  state.notice = ok ? 'Body 1〜3 の全文をコピーしました' : null;
+  const sentences = [];
+  set.bodies.forEach(b => (b.sentences || []).forEach(s => {
+    const t = String(s).trim();
+    if (t) sentences.push(t);
+  }));
+  if (!sentences.length) return;
+
+  const voices = synth.getVoices ? synth.getVoices() : [];
+  const enVoice = voices.find(v => /^en[-_]?US/i.test(v.lang))
+    || voices.find(v => /^en/i.test(v.lang)) || null;
+
+  synth.cancel(); // 念のため既存キューを破棄
+  state.readingSetId = setId;
+  state.error = null;
   render();
+
+  let idx = 0;
+  const speakNext = () => {
+    // ユーザーが停止した／別セットに切り替わったら中断
+    if (state.readingSetId !== setId || idx >= sentences.length) {
+      if (state.readingSetId === setId) { state.readingSetId = null; render(); }
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(sentences[idx++]);
+    u.lang = 'en-US';
+    if (enVoice) u.voice = enVoice;
+    u.rate = 0.95;
+    u.onend = speakNext;
+    u.onerror = () => {
+      if (state.readingSetId === setId) { state.readingSetId = null; render(); }
+    };
+    synth.speak(u);
+  };
+  speakNext();
 }
 
 /* 指定観点での Body 書き直しモーダル */
@@ -1931,7 +1959,7 @@ $app.addEventListener('click', (ev) => {
       render();
     }
   }
-  else if (a === 'go-home') { state.view = 'home'; render(); }
+  else if (a === 'go-home') { stopReading(); state.view = 'home'; render(); }
   else if (a === 'toggle-ja') {
     const bi = Number(el.dataset.body);
     state.showJa[bi] = !state.showJa[bi];
@@ -1948,7 +1976,7 @@ $app.addEventListener('click', (ev) => {
     localStorage.setItem(LS.dirty, '1');
     cloudFlush().then(() => { if (state.modal === 'settings') render(); });
   }
-  else if (a === 'copy-essay') { doCopyEssay(el.dataset.id); }
+  else if (a === 'read-essay') { doReadEssay(el.dataset.id); }
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
   else if (a === 'open-chat') {
