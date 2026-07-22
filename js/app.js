@@ -314,8 +314,9 @@ function viewHome() {
         <div class="set-sub">${esc(s.topicJa || '')} ${stanceBadge(s.stance)} ${s.source === 'gemini' ? '<span class="badge src">Gemini</span>' : '<span class="badge src">サンプル</span>'}</div>
       </div>
       <div class="set-side">
+        ${s.pinned ? '<span class="cloud-badge" title="保護中（削除・再生成で消えません）">🔒 保護</span>' : ''}
         ${scoreBadge}
-        <button class="btn small ghost" data-action="delete-set" data-id="${esc(s.id)}">削除</button>
+        ${s.pinned ? '' : `<button class="btn small ghost" data-action="delete-set" data-id="${esc(s.id)}">削除</button>`}
       </div>
     </div>`;
   }).join('') || '<p class="empty">まだエッセイがありません。下のテーマから作成してください。</p>';
@@ -418,16 +419,22 @@ function viewStudy() {
       <h2>${esc(set.topic)}</h2>
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
       <div class="row">
+        <button class="btn small ${set.pinned ? '' : 'ghost'}" data-action="toggle-pin" data-id="${esc(set.id)}">${set.pinned ? '🔒 保護中（解除）' : '🔓 保護する'}</button>
         ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${READ_REPEAT}）` : `🔊 全文読み上げ（${READ_REPEAT}回）`}</button>` : ''}
-        ${set.source === 'gemini' ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
+        ${set.source === 'gemini' && !set.pinned ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
         ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
+      ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
     </div>
     ${argSummaryCard(set)}
     <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。色付き部分は<strong>タップで編集</strong>でき、保存すると再採点されます。</p>
     ${evalSection(set)}
-    ${bodiesHtml}`;
+    ${bodiesHtml}
+    <div class="card memo-card">
+      <div class="body-head"><h3>📝 メモ</h3><span class="stat">自動保存</span></div>
+      <textarea id="essayMemo" class="memo-input" data-id="${esc(set.id)}" rows="4" placeholder="このエッセイについてのメモ（覚えた表現、改善点、次回の狙いなど）。入力すると自動で保存されます。">${esc(set.memo || '')}</textarea>
+    </div>`;
 }
 
 /* 各 Body の観点（argument）を役割ごとに一覧表示する */
@@ -1612,6 +1619,7 @@ async function runBackgroundEvaluation(setId) {
 function regenerateEssay(setId) {
   const set = findSet(setId);
   if (!set) return;
+  if (set.pinned) { state.notice = '保護中のエッセイは再生成できません。先に保護を解除してください。'; render(); return; }
   if (!confirm('この構成を削除し、同じテーマ・立場で新しく作り直しますか？')) return;
   saveSetsList(getSets().filter(s => s.id !== setId));
   doGenerateEssay({ topic: set.topic, topicJa: set.topicJa }, set.stance);
@@ -1969,8 +1977,21 @@ $app.addEventListener('click', (ev) => {
     state.view = 'study';
     render();
   }
+  else if (a === 'toggle-pin') {
+    const sets = getSets();
+    const set = sets.find(s => s.id === el.dataset.id);
+    if (set) {
+      set.pinned = !set.pinned;
+      saveSetsList(sets);
+      state.notice = set.pinned
+        ? 'このエッセイを保護しました。再生成・削除では消えません。'
+        : '保護を解除しました。';
+      render();
+    }
+  }
   else if (a === 'delete-set') {
     const set = findSet(el.dataset.id);
+    if (set && set.pinned) { state.notice = '保護中のエッセイは削除できません。先に保護を解除してください。'; render(); return; }
     if (set && confirm(`「${set.topic}」を削除しますか？`)) {
       saveSetsList(getSets().filter(s => s.id !== el.dataset.id));
       render();
@@ -2056,6 +2077,12 @@ $app.addEventListener('input', (ev) => {
   }
   if (ev.target.id === 'dcNote' && state.cellDraft) state.cellDraft.note = ev.target.value;
   if (ev.target.id === 'rewritePointInput' && state.bodyRewrite) state.bodyRewrite.text = ev.target.value;
+  // エッセイのメモを自動保存（再描画せず、フォーカスを保つ）
+  if (ev.target.id === 'essayMemo') {
+    const sets = getSets();
+    const s = sets.find(x => x.id === ev.target.dataset.id);
+    if (s) { s.memo = ev.target.value; saveSetsList(sets); }
+  }
 });
 
 // ドリルのセレクト（配役・譲歩素材）を state に同期
