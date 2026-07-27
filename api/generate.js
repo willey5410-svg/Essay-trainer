@@ -94,7 +94,8 @@ Length constraint (STRICT):
 General rules:
 - Vocabulary level: CEFR B2–C1, formal but natural written English suitable for EIKEN Grade 1.
 - The final consequence of every body must point in the SAME direction as the stance.
-- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph.${wsSection}
+- Every string in "sentences" MUST be written in ENGLISH only. Never put Japanese in "sentences".
+- For each body, also provide "ja": a natural Japanese translation of the FULL paragraph. Japanese belongs ONLY in "ja", never in "sentences" or "argument".${wsSection}
 
 Return ONLY this JSON structure:
 {"bodies":[{"argument":"...","sentences":["...","...","...","..."],"ja":"..."},{...},{...}]}`;
@@ -321,7 +322,8 @@ ${spec}
 General rules:
 - Keep the same core "argument" (rephrase into a neutral, structural, one-level-abstract noun phrase of 5–8 words).
 - Exactly FOUR complete sentences, 45–60 words total, CEFR B2–C1, formal written English.
-- Provide "ja": a natural Japanese translation of the full paragraph.
+- Every string in "sentences" MUST be ENGLISH only — never put Japanese there.
+- Provide "ja": a natural Japanese translation of the full paragraph (Japanese belongs ONLY in "ja").
 
 Return ONLY this JSON:
 {"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
@@ -368,7 +370,7 @@ ADOPT this point as the argument — rephrase it into a neutral, structural, one
 
 ${roleSpec}
 
-Rules: exactly FOUR complete sentences, 45–60 words total, CEFR B2–C1, formal written English. The final consequence must point in the SAME direction as the stance. Provide "ja": a natural Japanese translation of the full paragraph.
+Rules: exactly FOUR complete sentences, 45–60 words total, CEFR B2–C1, formal written English. The final consequence must point in the SAME direction as the stance. Every string in "sentences" MUST be ENGLISH only — never put Japanese there. Provide "ja": a natural Japanese translation of the full paragraph (Japanese belongs ONLY in "ja").
 
 Return ONLY this JSON:
 {"argument":"...","sentences":["...","...","...","..."],"ja":"..."}`;
@@ -405,6 +407,10 @@ function assembleEssay(bodies) {
 }
 
 /* Gemini から返った1つの body を検証・整形する（不正なら null） */
+// 日本語（ひらがな・カタカナ・漢字）を含むか。sentences は英文のはずなので、
+// 和訳が sentences に混入した不正な生成を弾くために使う。
+const JA_CHAR_RE = /[぀-ゟ゠-ヿ一-鿿]/;
+
 function normalizeBody(raw) {
   if (!raw) return null;
   const argument = String(raw.argument || '').trim().replace(/[.。]+$/, '').slice(0, 200);
@@ -412,6 +418,8 @@ function normalizeBody(raw) {
     ? raw.sentences.map(s => String(s || '').trim()).filter(Boolean).map(s => s.slice(0, 300))
     : [];
   if (!argument || sentences.length < 3) return null;
+  // 英文であるべき sentences に日本語が混じっていたら不正扱い（和訳の混入を防ぐ）
+  if (sentences.some(s => JA_CHAR_RE.test(s))) return null;
   return { argument, sentences, ja: String(raw.ja || '').trim().slice(0, 1000) };
 }
 

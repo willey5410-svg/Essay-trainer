@@ -37,6 +37,9 @@ function cleanSlotValue(v) {
   return String(v || '').trim().replace(/[.。]+$/, '');
 }
 
+/* 英文であるべき本文に日本語が混じっていないか（和訳が sentences に混入した不正生成の検出用） */
+const JA_CHAR_RE = /[぀-ゟ゠-ヿ一-鿿]/;
+
 /* サーバーが整形して返す body（argument / sentences / ja）を検証・整形する */
 function parseBody(b, i) {
   const argument = cleanSlotValue(b && b.argument);
@@ -45,6 +48,10 @@ function parseBody(b, i) {
   if (!argument || sentences.length < 3) {
     // アプリ更新直後に古いページがサーバーの新形式を受け取ると起きる
     throw new Error(`生成結果の形式が不正です（Body ${i + 1} の本文が揃っていません）。アプリが更新された直後の可能性があるため、ページを再読み込みしてからもう一度お試しください。`);
+  }
+  if (sentences.some(s => JA_CHAR_RE.test(s))) {
+    // 英文であるべき本文に和訳が混入している（Gemini の生成ゆれ）。もう一度生成すれば直る。
+    throw new Error(`生成結果の本文に日本語が混じっていました（Body ${i + 1}）。もう一度お試しください。`);
   }
   return { argument, sentences, ja: String((b && b.ja) || '').trim() };
 }
