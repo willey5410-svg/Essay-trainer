@@ -379,15 +379,16 @@ function viewStudy() {
 
   const bodiesHtml = set.bodies.map((body, bi) => {
     const role = roleForBody(bi, body);
+    const locked = !!set.pinned; // 保護中は本文を編集不可（タップ編集・書き直し・切替を無効化）
     const sentences = Array.isArray(body.sentences) ? body.sentences : [];
     const linesHtml = sentences.map((s, si) =>
-      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${renderSentence(s, { bi, si })}</p>`
+      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${renderSentence(s, locked ? null : { bi, si })}</p>`
     ).join('');
     const wc = bodyText(body).split(/\s+/).filter(Boolean).length;
     const jaShown = state.showJa[bi];
     // Body 2 だけ「実証型 ⇄ 思考実験型」を切り替えられる（実例が浮かばないとき用）
     let switchBtn = '';
-    if (bi === 1) {
+    if (bi === 1 && !locked) {
       const cur = body.mode || 'empirical';
       const target = cur === 'empirical' ? 'scenario' : 'empirical';
       const label = state.switchingBody2 ? '🔀 変換中…'
@@ -402,11 +403,11 @@ function viewStudy() {
       ${linesHtml}
       ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
       <div class="row">
-        <button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>
-        <button class="btn small ghost" data-action="open-rewrite-body" data-body="${bi}">🔁 観点を指定して書き直す</button>
+        ${locked ? '' : `<button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>`}
+        ${locked ? '' : `<button class="btn small ghost" data-action="open-rewrite-body" data-body="${bi}">🔁 観点を指定して書き直す</button>`}
         ${switchBtn}
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
-        ${body.original ? `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>` : ''}
+        ${locked || !body.original ? '' : `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>`}
       </div>
     </div>`;
   }).join('');
@@ -817,6 +818,7 @@ async function doSwitchBody2(targetMode) {
   if (state.switchingBody2) return;
   const set = findSet(state.setId);
   if (!set) return;
+  if (set.pinned) { state.notice = '保護中のエッセイは変更できません。先に保護を解除してください。'; render(); return; }
   if (!localStorage.getItem(LS.keyword)) {
     state.modal = 'keyword';
     state.keywordError = '型の切り替えには合言葉の入力が必要です';
@@ -1926,6 +1928,7 @@ $app.addEventListener('click', (ev) => {
     const bi = Number(el.dataset.body);
     const set = findSet(state.setId);
     if (!set) return;
+    if (set.pinned) { state.notice = '保護中のエッセイは本文を編集できません。先に保護を解除してください。'; render(); return; }
     const vals = {};
     (set.bodies[bi].sentences || []).forEach((s, si) => {
       String(s).split(TPL_RE).forEach((seg, gi) => { if (gi % 2 === 0) vals[`fe-${si}-${gi}`] = seg.trim(); });
@@ -1945,6 +1948,7 @@ $app.addEventListener('click', (ev) => {
     const bi = Number(el.dataset.body);
     const set = findSet(state.setId);
     if (!set) return;
+    if (set.pinned) { state.notice = '保護中のエッセイは書き直せません。先に保護を解除してください。'; render(); return; }
     state.bodyRewrite = { setId: set.id, bodyIdx: bi, text: '', busy: false, error: null };
     state.modal = 'bodyRewrite';
     render();
@@ -1956,6 +1960,7 @@ $app.addEventListener('click', (ev) => {
     const bi = Number(el.dataset.body);
     const sets = getSets();
     const set = sets.find(s => s.id === state.setId);
+    if (set && set.pinned) { state.notice = '保護中のエッセイは変更できません。先に保護を解除してください。'; render(); return; }
     const body = set && set.bodies[bi];
     if (body && body.original && confirm('この Body を元の模範解答に戻しますか？')) {
       body.argument = body.original.argument;
