@@ -407,6 +407,7 @@ function viewStudy() {
         ${locked ? '' : `<button class="btn small ghost" data-action="open-rewrite-body" data-body="${bi}">🔁 観点を指定して書き直す</button>`}
         ${switchBtn}
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
+        ${locked || !body.prev ? '' : `<button class="btn small ghost" data-action="undo-last" data-body="${bi}">↩️ 直前に戻す</button>`}
         ${locked || !body.original ? '' : `<button class="btn small ghost" data-action="undo-body" data-body="${bi}">元の模範解答に戻す</button>`}
       </div>
     </div>`;
@@ -600,6 +601,36 @@ function modalBodyEdit() {
   </div>`;
 }
 
+/* Body の内容（本文・観点・和訳・型・模範解答スナップショット）を1つのオブジェクトに写す。
+   prev 自身は含めない（履歴の入れ子を防ぐ）。 */
+function bodySnapshot(body) {
+  return {
+    argument: body.argument,
+    sentences: (body.sentences || []).slice(),
+    ja: body.ja || '',
+    mode: body.mode,
+    original: body.original ? Object.assign({}, body.original) : undefined,
+  };
+}
+
+/* 変更を加える直前に「1つ前の状態」を prev に退避する（直前に戻す＝取り消しの取り消し用）。 */
+function snapshotPrev(body) {
+  body.prev = bodySnapshot(body);
+}
+
+/* 現在の状態と prev を入れ替える（もう一度押すと元に戻る＝二段のトグル）。 */
+function swapPrev(body) {
+  if (!body.prev) return;
+  const cur = bodySnapshot(body);
+  const p = body.prev;
+  body.argument = p.argument;
+  body.sentences = p.sentences;
+  body.ja = p.ja;
+  body.mode = p.mode;
+  if (p.original) body.original = p.original; else delete body.original;
+  body.prev = cur; // 押し直しで戻れるように現在の状態を保持
+}
+
 function applyBodyEdit() {
   const be = state.bodyEdit;
   if (!be) return;
@@ -621,6 +652,7 @@ function applyBodyEdit() {
     render();
     return;
   }
+  snapshotPrev(body); // 直前の状態を退避（「直前に戻す」で復帰できる）
   // 書き換え前の Body をスナップショット（初回のみ）。以降の編集でも真の原文を保持する。
   if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
   body.sentences = newSentences;
@@ -785,6 +817,7 @@ async function doRewriteBody() {
     const sets = getSets();
     const s2 = sets.find(s => s.id === br.setId);
     const body = s2.bodies[br.bodyIdx];
+    snapshotPrev(body); // 直前の状態を退避（「直前に戻す」で復帰できる）
     if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
     body.argument = nb.argument;
     body.sentences = nb.sentences;
@@ -833,6 +866,7 @@ async function doSwitchBody2(targetMode) {
     const sets = getSets();
     const s2 = sets.find(s => s.id === set.id);
     const body = s2.bodies[1];
+    snapshotPrev(body); // 直前の状態を退避（「直前に戻す」で復帰できる）
     if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
     body.argument = nb.argument;
     body.sentences = nb.sentences;
@@ -1962,7 +1996,8 @@ $app.addEventListener('click', (ev) => {
     const set = sets.find(s => s.id === state.setId);
     if (set && set.pinned) { state.notice = '保護中のエッセイは変更できません。先に保護を解除してください。'; render(); return; }
     const body = set && set.bodies[bi];
-    if (body && body.original && confirm('この Body を元の模範解答に戻しますか？')) {
+    if (body && body.original && confirm('この Body を生成直後の模範解答に戻します。今の編集内容は失われます（「↩️ 直前に戻す」で1回だけ元に戻せます）。よろしいですか？')) {
+      snapshotPrev(body); // 直前（編集済み）の状態を退避して「直前に戻す」で復帰できるようにする
       body.argument = body.original.argument;
       body.sentences = body.original.sentences;
       body.ja = body.original.ja;
@@ -1970,7 +2005,22 @@ $app.addEventListener('click', (ev) => {
       delete body.original;
       set.evaluation = null; // 内容が変わったため採点をやり直す
       saveSetsList(sets);
-      state.notice = '元の模範解答に戻しました。再採点します。';
+      state.notice = '元の模範解答に戻しました。再採点します。（「↩️ 直前に戻す」で編集内容に復帰できます）';
+      render();
+      autoRescore(set.id);
+    }
+  }
+  else if (a === 'undo-last') {
+    const bi = Number(el.dataset.body);
+    const sets = getSets();
+    const set = sets.find(s => s.id === state.setId);
+    if (set && set.pinned) { state.notice = '保護中のエッセイは変更できません。先に保護を解除してください。'; render(); return; }
+    const body = set && set.bodies[bi];
+    if (body && body.prev) {
+      swapPrev(body); // 現在 ⇄ 直前 を入れ替え（もう一度押すと戻る）
+      set.evaluation = null; // 内容が変わったため採点をやり直す
+      saveSetsList(sets);
+      state.notice = '直前の状態に戻しました。再採点します。（もう一度押すと元に戻ります）';
       render();
       autoRescore(set.id);
     }
