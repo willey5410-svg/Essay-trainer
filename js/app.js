@@ -1659,10 +1659,17 @@ async function runBackgroundEvaluation(setId) {
   try {
     const set = findSet(setId);
     if (set) {
-      const evaluation = await evaluateEssaySet(set);
+      const { evaluation, arguments: args } = await evaluateEssaySet(set);
       const sets = getSets();
       const s2 = sets.find(s => s.id === setId);
-      if (s2) { s2.evaluation = evaluation; saveSetsList(sets); }
+      if (s2) {
+        s2.evaluation = evaluation;
+        // 「この構成の3観点」を本文に合わせて最新化（採点結果に相乗り、追加の呼び出しなし）
+        if (Array.isArray(args) && args.length === 3) {
+          args.forEach((a, i) => { if (a && s2.bodies[i]) s2.bodies[i].argument = a; });
+        }
+        saveSetsList(sets);
+      }
     }
   } catch (e) {
     failure = e;

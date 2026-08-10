@@ -74,11 +74,12 @@ async function generateEssaySet(theme, stance, worksheet) {
   };
 }
 
-/* 生成済みエッセイの採点（生成とは別リクエストで、Gemini呼び出し1回のみ） */
+/* 生成済みエッセイの採点（生成とは別リクエストで、Gemini呼び出し1回のみ）。
+   採点に加えて、本文に合わせて最新化した各Bodyの観点（arguments）も返す。 */
 async function evaluateEssaySet(set) {
   const data = await apiCall({ mode: 'evaluate', topic: set.topic, stance: set.stance, bodies: set.bodies });
   if (!data || !data.evaluation) throw new Error('採点結果の形式が不正です');
-  return data.evaluation;
+  return { evaluation: data.evaluation, arguments: Array.isArray(data.arguments) ? data.arguments : null };
 }
 
 /* ドリル Stage 1 の増減リストを Gemini に作ってもらう */

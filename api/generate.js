@@ -442,8 +442,11 @@ Score each criterion from 0 to 10 (0.5 steps allowed):
 
 For each criterion also write one short comment IN JAPANESE: what is good and what specifically should be improved.
 
+Also, for EACH of the three body paragraphs, distill its CURRENT core "argument" — a 5–8 word ENGLISH noun phrase naming WHAT structurally changes, that accurately reflects the paragraph AS WRITTEN above. ${ARGUMENT_PRINCIPLES}
+Return them in order as "arguments":["body1","body2","body3"]. English only — never Japanese.
+
 Return ONLY this JSON:
-{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}}`;
+{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}, "arguments": ["...", "...", "..."]}`;
 }
 
 function normalizeEval(raw) {
@@ -795,8 +798,8 @@ module.exports = async (req, res) => {
     const paragraphs = assembleEssay(req.body.bodies);
     if (!paragraphs) return res.status(400).json({ error: 'bodies が不正です' });
     try {
-      const evaluation = await evaluateEssay(topic.trim().slice(0, 300), stance, paragraphs, apiKey, model);
-      return res.status(200).json({ evaluation });
+      const result = await evaluateEssay(topic.trim().slice(0, 300), stance, paragraphs, apiKey, model);
+      return res.status(200).json({ evaluation: result.evaluation, arguments: result.arguments });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
@@ -859,5 +862,12 @@ async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
     err.status = 502;
     throw err;
   }
-  return ev;
+  // 各Bodyの観点（argument）を本文に合わせて最新化して返す。3件そろい、
+  // すべて英語（日本語混入なし）のときだけ有効とする。
+  let refreshedArguments = null;
+  if (Array.isArray(raw.arguments) && raw.arguments.length === 3) {
+    const args = raw.arguments.map(a => String(a || '').trim().replace(/[.。]+$/, '').slice(0, 200));
+    if (args.every(a => a && !JA_CHAR_RE.test(a))) refreshedArguments = args;
+  }
+  return { evaluation: ev, arguments: refreshedArguments };
 }
