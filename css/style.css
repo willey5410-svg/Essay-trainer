@@ -284,6 +284,8 @@ section { margin-bottom: 8px; }
 .arg-list li:last-child { border-bottom: none; }
 .arg-role { font-weight: 700; font-size: 0.85rem; margin-right: 4px; }
 .arg-text { font-size: 0.95rem; margin-top: 3px; }
+.arg-axes { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+.badge.axis { background: var(--bg); color: var(--sub); border: 1px solid var(--border); font-size: 0.72rem; }
 
 /* evaluation card */
 .eval-card { border-left: 4px solid var(--accent); }

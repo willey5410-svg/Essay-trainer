@@ -48,6 +48,25 @@ const DRILL_DOMAINS = [
 const DRILL_STAGE_GUIDE = { 1: 60, 2: 120, 3: 90, 4: 30 };
 const DRILL_TOTAL_SECONDS = 300;
 
+/* 「この構成の3観点」を分類する2軸（MECE）。
+   軸1=主体（誰・どの範囲に影響するか）、軸2=領域（分野・価値）。
+   en は Gemini プロンプト／保存用の識別子、ja は表示名。 */
+const ARG_LAYERS = [
+  { ja: '個人', en: 'individuals' },
+  { ja: '社会', en: 'society' },
+  { ja: '国家', en: 'the nation' },
+  { ja: '世界', en: 'the world' },
+];
+const ARG_DOMAINS = [
+  { ja: '経済', en: 'economy' },
+  { ja: '技術', en: 'technology' },
+  { ja: '権利', en: 'rights' },
+  { ja: '文化', en: 'culture' },
+  { ja: '健康', en: 'health' },
+];
+function argLayerJa(en) { const x = ARG_LAYERS.find(l => l.en === en); return x ? x.ja : ''; }
+function argDomainJa(en) { const x = ARG_DOMAINS.find(d => d.en === en); return x ? x.ja : ''; }
+
 /* テンプレート由来の定型表現。学習画面でこれ以外（＝生成された内容部分）を色分け表示する。
    正規表現の選択肢は先頭から順に試されるため、長いフレーズを先に並べること。 */
 const TEMPLATE_PHRASES = [

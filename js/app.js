@@ -440,12 +440,17 @@ function viewStudy() {
     </div>`;
 }
 
-/* 各 Body の観点（argument）を役割ごとに一覧表示する */
+/* 各 Body の観点（argument）を役割・2軸分類（主体×領域）とともに一覧表示する */
 function argSummaryCard(set) {
   const items = set.bodies.map((b, i) => {
     const role = roleForBody(i, b);
+    const layerJa = argLayerJa(b.axisLayer);
+    const domainJa = argDomainJa(b.axisDomain);
+    const axisTags = (layerJa || domainJa)
+      ? `<div class="arg-axes">${layerJa ? `<span class="badge axis">主体：${esc(layerJa)}</span>` : ''}${domainJa ? `<span class="badge axis">領域：${esc(domainJa)}</span>` : ''}</div>`
+      : '';
     return `<li><span class="arg-role">${role.name}</span> <span class="badge src">${esc(role.type)}</span>
-      <div class="arg-text">${esc(b.argument || '（観点未設定）')}</div></li>`;
+      <div class="arg-text">${esc(b.argument || '（観点未設定）')}</div>${axisTags}</li>`;
   }).join('');
   return `<div class="card arg-summary">
     <h3>🧭 この構成の3観点</h3>
@@ -1659,7 +1664,7 @@ async function runBackgroundEvaluation(setId) {
   try {
     const set = findSet(setId);
     if (set) {
-      const { evaluation, arguments: args } = await evaluateEssaySet(set);
+      const { evaluation, arguments: args, axes } = await evaluateEssaySet(set);
       const sets = getSets();
       const s2 = sets.find(s => s.id === setId);
       if (s2) {
@@ -1667,6 +1672,12 @@ async function runBackgroundEvaluation(setId) {
         // 「この構成の3観点」を本文に合わせて最新化（採点結果に相乗り、追加の呼び出しなし）
         if (Array.isArray(args) && args.length === 3) {
           args.forEach((a, i) => { if (a && s2.bodies[i]) s2.bodies[i].argument = a; });
+        }
+        // 各観点を2軸（主体×領域）で分類してタグ付け
+        if (Array.isArray(axes) && axes.length === 3) {
+          axes.forEach((ax, i) => {
+            if (ax && s2.bodies[i]) { s2.bodies[i].axisLayer = ax.layer || null; s2.bodies[i].axisDomain = ax.domain || null; }
+          });
         }
         saveSetsList(sets);
       }

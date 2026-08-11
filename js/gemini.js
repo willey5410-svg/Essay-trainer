@@ -79,7 +79,11 @@ async function generateEssaySet(theme, stance, worksheet) {
 async function evaluateEssaySet(set) {
   const data = await apiCall({ mode: 'evaluate', topic: set.topic, stance: set.stance, bodies: set.bodies });
   if (!data || !data.evaluation) throw new Error('採点結果の形式が不正です');
-  return { evaluation: data.evaluation, arguments: Array.isArray(data.arguments) ? data.arguments : null };
+  return {
+    evaluation: data.evaluation,
+    arguments: Array.isArray(data.arguments) ? data.arguments : null,
+    axes: Array.isArray(data.axes) ? data.axes : null,
+  };
 }
 
 /* ドリル Stage 1 の増減リストを Gemini に作ってもらう */

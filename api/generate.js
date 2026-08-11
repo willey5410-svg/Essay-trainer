@@ -411,6 +411,10 @@ function assembleEssay(bodies) {
 // 和訳が sentences に混入した不正な生成を弾くために使う。
 const JA_CHAR_RE = /[぀-ゟ゠-ヿ一-鿿]/;
 
+// 「この構成の3観点」を分類する2軸（MECE）。採点時に各Bodyをこの中の1つずつに分類する。
+const ARG_LAYER_ENS = ['individuals', 'society', 'the nation', 'the world'];
+const ARG_DOMAIN_ENS = ['economy', 'technology', 'rights', 'culture', 'health'];
+
 function normalizeBody(raw) {
   if (!raw) return null;
   const argument = String(raw.argument || '').trim().replace(/[.。]+$/, '').slice(0, 200);
@@ -445,8 +449,13 @@ For each criterion also write one short comment IN JAPANESE: what is good and wh
 Also, for EACH of the three body paragraphs, distill its CURRENT core "argument" — a 5–8 word ENGLISH noun phrase naming WHAT structurally changes, that accurately reflects the paragraph AS WRITTEN above. ${ARGUMENT_PRINCIPLES}
 Return them in order as "arguments":["body1","body2","body3"]. English only — never Japanese.
 
+Finally, classify EACH of the three bodies on two axes, choosing EXACTLY ONE label per axis that best fits the paragraph (no overlap: pick the single most central one):
+- "layer" (whose scope is primarily affected): one of [${ARG_LAYER_ENS.join(' | ')}]
+- "domain" (which field/value it is mainly about): one of [${ARG_DOMAIN_ENS.join(' | ')}]
+Return them in order as "axes":[{"layer":"...","domain":"..."},{...},{...}] using the EXACT English labels above.
+
 Return ONLY this JSON:
-{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}, "arguments": ["...", "...", "..."]}`;
+{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}, "arguments": ["...", "...", "..."], "axes": [{"layer": "...", "domain": "..."}, {"layer": "...", "domain": "..."}, {"layer": "...", "domain": "..."}]}`;
 }
 
 function normalizeEval(raw) {
@@ -799,7 +808,7 @@ module.exports = async (req, res) => {
     if (!paragraphs) return res.status(400).json({ error: 'bodies が不正です' });
     try {
       const result = await evaluateEssay(topic.trim().slice(0, 300), stance, paragraphs, apiKey, model);
-      return res.status(200).json({ evaluation: result.evaluation, arguments: result.arguments });
+      return res.status(200).json({ evaluation: result.evaluation, arguments: result.arguments, axes: result.axes });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
@@ -869,5 +878,18 @@ async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
     const args = raw.arguments.map(a => String(a || '').trim().replace(/[.。]+$/, '').slice(0, 200));
     if (args.every(a => a && !JA_CHAR_RE.test(a))) refreshedArguments = args;
   }
-  return { evaluation: ev, arguments: refreshedArguments };
+  // 各Bodyの2軸分類（主体×領域）。3件そろい、すべて許可ラベルのときだけ有効。
+  let axes = null;
+  if (Array.isArray(raw.axes) && raw.axes.length === 3) {
+    const parsed = raw.axes.map(a => {
+      const layer = String((a && a.layer) || '').trim().toLowerCase();
+      const domain = String((a && a.domain) || '').trim().toLowerCase();
+      return {
+        layer: ARG_LAYER_ENS.includes(layer) ? layer : null,
+        domain: ARG_DOMAIN_ENS.includes(domain) ? domain : null,
+      };
+    });
+    if (parsed.every(a => a.layer && a.domain)) axes = parsed;
+  }
+  return { evaluation: ev, arguments: refreshedArguments, axes };
 }
