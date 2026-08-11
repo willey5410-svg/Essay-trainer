@@ -446,8 +446,9 @@ function argSummaryCard(set) {
     const role = roleForBody(i, b);
     const layerJa = argLayerJa(b.axisLayer);
     const domainJa = argDomainJa(b.axisDomain);
-    const axisTags = (layerJa || domainJa)
-      ? `<div class="arg-axes">${layerJa ? `<span class="badge axis">主体：${esc(layerJa)}</span>` : ''}${domainJa ? `<span class="badge axis">領域：${esc(domainJa)}</span>` : ''}</div>`
+    const axisLabel = (layerJa && domainJa) ? `${layerJa}×${domainJa}` : (layerJa || domainJa);
+    const axisTags = axisLabel
+      ? `<div class="arg-axes"><span class="badge axis">${esc(axisLabel)}</span></div>`
       : '';
     return `<li><span class="arg-role">${role.name}</span> <span class="badge src">${esc(role.type)}</span>
       <div class="arg-text">${esc(b.argument || '（観点未設定）')}</div>${axisTags}</li>`;
