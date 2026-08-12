@@ -31,6 +31,7 @@ let state = {
   cellDraft: null,     // {layer, domain, note, side} セル編集モーダルの下書き
   keywordError: null,
   busyKeyword: false,
+  showKeyword: false,   // 設定画面で合言葉を平文表示するか
   pendingTheme: null,
   pendingStance: null,
   themeAddError: null,
@@ -505,9 +506,12 @@ function modalSettings() {
     <div class="modal" data-stop>
       <h3>設定</h3>
       <label>合言葉（キーワード）</label>
-      <input type="password" id="inpKeyword" value="${esc(localStorage.getItem(LS.keyword) || '')}" placeholder="合言葉を入力">
+      <div class="row">
+        <input type="${state.showKeyword ? 'text' : 'password'}" id="inpKeyword" value="${esc(localStorage.getItem(LS.keyword) || '')}" placeholder="合言葉を入力">
+        <button class="btn small ghost" data-action="toggle-keyword-vis" type="button">${state.showKeyword ? '🙈 隠す' : '👁 表示'}</button>
+      </div>
       ${state.keywordError ? `<p class="field-error">${esc(state.keywordError)}</p>` : ''}
-      <p class="hint-text">Gemini での生成に必要な合言葉です。確認のうえこの端末に保存されます。</p>
+      <p class="hint-text">Gemini での生成に必要な合言葉です。確認のうえこの端末に保存されます。「👁 表示」で保存済みの合言葉を確認できます。</p>
       <div class="row">
         <button class="btn" data-action="save-keyword" data-from="settings" ${state.busyKeyword ? 'disabled' : ''}>${state.busyKeyword ? '確認中…' : '確認して保存'}</button>
         <button class="btn ghost" data-action="close-modal">閉じる</button>
@@ -1870,7 +1874,14 @@ $app.addEventListener('click', (ev) => {
   if (stop && el.dataset.action === 'close-modal' && !stop.contains(el)) return;
   const a = el.dataset.action;
 
-  if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; render(); }
+  if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; state.showKeyword = false; render(); }
+  else if (a === 'toggle-keyword-vis') {
+    // 入力欄の内容を保持するため、再描画せず type だけ切り替える
+    state.showKeyword = !state.showKeyword;
+    const inp = document.getElementById('inpKeyword');
+    if (inp) inp.type = state.showKeyword ? 'text' : 'password';
+    el.textContent = state.showKeyword ? '🙈 隠す' : '👁 表示';
+  }
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
     state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
