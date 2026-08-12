@@ -14,7 +14,30 @@ const LS = {
   seeded: 'et.seeded.v5', // サンプル内容を更新したらバージョンを上げて再シードする
   dirty: 'et.cloudDirty', // クラウド未送信の変更がある印
   theme: 'et.theme', // auto | light | dark
+  readRate: 'et.readRate',     // 音読の速さ
+  readPitch: 'et.readPitch',   // 音読の声の高さ
+  readVoice: 'et.readVoice',   // 音読の声（voice.name）
+  readRepeat: 'et.readRepeat', // 音読の繰り返し回数
 };
+
+/* ---- 音読（読み上げ）設定の読み取り。未設定時は既定値にフォールバック ---- */
+function readRate() { const v = parseFloat(localStorage.getItem(LS.readRate)); return isFinite(v) ? Math.min(2, Math.max(0.5, v)) : 0.95; }
+function readPitch() { const v = parseFloat(localStorage.getItem(LS.readPitch)); return isFinite(v) ? Math.min(2, Math.max(0, v)) : 1.0; }
+function readRepeat() { const v = parseInt(localStorage.getItem(LS.readRepeat), 10); return isFinite(v) ? Math.min(20, Math.max(1, v)) : 10; }
+function readVoiceName() { return localStorage.getItem(LS.readVoice) || ''; }
+function availableEnVoices() {
+  const s = window.speechSynthesis;
+  const vs = s && s.getVoices ? s.getVoices() : [];
+  return vs.filter(v => /^en/i.test(v.lang));
+}
+/* 保存済みの声（無ければ en-US 優先の自動選択） */
+function pickReadVoice() {
+  const s = window.speechSynthesis;
+  const vs = s && s.getVoices ? s.getVoices() : [];
+  const name = readVoiceName();
+  if (name) { const m = vs.find(v => v.name === name); if (m) return m; }
+  return vs.find(v => /^en[-_]?US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+}
 
 /* テーマ（配色）を <html data-theme> に適用する */
 function applyTheme() {
@@ -44,7 +67,7 @@ let state = {
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
   readingSetId: null,    // 全文読み上げ中のセットID（Web Speech API）
-  readingPass: 0,        // 読み上げの現在の周回数（1〜READ_REPEAT）
+  readingPass: 0,        // 読み上げの現在の周回数
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
   bodyRewrite: null,     // {setId, bodyIdx, text, busy, error} 指定観点での書き直し
   switchingBody2: false, // Body 2 の型切り替え中フラグ
@@ -424,7 +447,7 @@ function viewStudy() {
       <div class="row">
         <button class="btn small ${set.pinned ? '' : 'ghost'}" data-action="toggle-pin" data-id="${esc(set.id)}">${set.pinned ? '🔒 保護中（解除）' : '🔓 保護する'}</button>
         <button class="btn small ghost" data-action="copy-essay" data-id="${esc(set.id)}">📋 全文コピー</button>
-        ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${READ_REPEAT}）` : `🔊 全文読み上げ（${READ_REPEAT}回）`}</button>` : ''}
+        ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${readRepeat()}）` : `🔊 全文読み上げ（${readRepeat()}回）`}</button>` : ''}
         ${set.source === 'gemini' && !set.pinned ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
         ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
         <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
@@ -501,6 +524,38 @@ function viewLoading() {
 
 /* ---------- modals ---------- */
 
+/* 音読設定（速さ・声の高さ・声・繰り返し回数＋テスト再生） */
+function modalReadSettings() {
+  if (!('speechSynthesis' in window)) {
+    return '<p class="hint-text">このブラウザは読み上げ（音声合成）に対応していません。</p>';
+  }
+  const voices = availableEnVoices();
+  const curVoice = readVoiceName();
+  const voiceOpts = ['<option value="">自動（en-US を優先）</option>']
+    .concat(voices.map(v => `<option value="${esc(v.name)}" ${v.name === curVoice ? 'selected' : ''}>${esc(v.name)}（${esc(v.lang)}）</option>`))
+    .join('');
+  const repeatOpts = [1, 2, 3, 5, 10, 15, 20]
+    .map(n => `<option value="${n}" ${readRepeat() === n ? 'selected' : ''}>${n}回</option>`).join('');
+  return `
+    <div class="read-setting">
+      <span>速さ <b id="rateVal">${readRate().toFixed(2)}</b></span>
+      <input type="range" id="readRate" min="0.5" max="1.5" step="0.05" value="${readRate()}">
+    </div>
+    <div class="read-setting">
+      <span>声の高さ <b id="pitchVal">${readPitch().toFixed(2)}</b></span>
+      <input type="range" id="readPitch" min="0.5" max="1.5" step="0.05" value="${readPitch()}">
+    </div>
+    <label class="sub">声（ブラウザ・端末により異なります）</label>
+    <select id="readVoice">${voiceOpts}</select>
+    ${voices.length === 0 ? '<p class="hint-text">利用可能な英語音声が読み込まれていません。少し待つか、端末に英語音声を追加してください。</p>' : ''}
+    <label class="sub">繰り返し回数</label>
+    <select id="readRepeat">${repeatOpts}</select>
+    <div class="row">
+      <button class="btn small ghost" data-action="test-read" type="button">🔊 テスト再生</button>
+      <button class="btn small ghost" data-action="test-read-stop" type="button">⏹ 停止</button>
+    </div>`;
+}
+
 function modalSettings() {
   return `<div class="overlay" data-action="close-modal">
     <div class="modal" data-stop>
@@ -525,6 +580,9 @@ function modalSettings() {
         }).join('')}
       </div>
       <p class="hint-text">「自動」は端末の設定（OS のダークモード）に追従します。</p>
+      <hr>
+      <label>音読（全文読み上げ）</label>
+      ${modalReadSettings()}
       <hr>
       <label>クラウド同期（Vercel Blob）</label>
       <p class="hint-text">状態：${cloudBadgeText() || '未確認'}${CLOUD.lastSync ? `（最終同期 ${new Date(CLOUD.lastSync).toLocaleTimeString()}）` : ''}${CLOUD.error ? ` — ${esc(CLOUD.error)}` : ''}${CLOUD.enabled === false ? ' — Vercel で Blob ストアを接続すると端末間で自動同期されます' : ''}</p>
@@ -711,9 +769,6 @@ async function doCopyEssay(setId) {
   render();
 }
 
-/* 読み上げの繰り返し回数（全文を通しで何回読むか） */
-const READ_REPEAT = 10;
-
 /* 読み上げを停止する（Web Speech API のキューを破棄） */
 function stopReading() {
   try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
@@ -721,9 +776,9 @@ function stopReading() {
   state.readingPass = 0;
 }
 
-/* Body 1〜3 の全文を英語で READ_REPEAT 回くり返し読み上げる。読み上げ中に
+/* Body 1〜3 の全文を英語で設定回数くり返し読み上げる。読み上げ中に
    再度押すと停止（トグル）。長文が途中で切れるブラウザ対策として、文単位に
-   分割して順に読む。 */
+   分割して順に読む。速さ・声の高さ・声・回数は設定から反映する。 */
 function doReadEssay(setId) {
   const synth = window.speechSynthesis;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
@@ -745,13 +800,14 @@ function doReadEssay(setId) {
   }));
   if (!sentences.length) return;
 
-  const voices = synth.getVoices ? synth.getVoices() : [];
-  const enVoice = voices.find(v => /^en[-_]?US/i.test(v.lang))
-    || voices.find(v => /^en/i.test(v.lang)) || null;
+  const enVoice = pickReadVoice();
+  const rate = readRate();
+  const pitch = readPitch();
+  const repeat = readRepeat(); // 開始時の設定で固定（読み上げ中の変更は次回反映）
 
   synth.cancel(); // 念のため既存キューを破棄
   state.readingSetId = setId;
-  state.readingPass = 1; // 現在何周目か（1〜READ_REPEAT）
+  state.readingPass = 1; // 現在何周目か（1〜repeat）
   state.error = null;
   render();
 
@@ -761,7 +817,7 @@ function doReadEssay(setId) {
     // ユーザーが停止した／別セットに切り替わったら中断
     if (state.readingSetId !== setId) return;
     if (idx >= sentences.length) {
-      if (pass >= READ_REPEAT) { // 全周終了
+      if (pass >= repeat) { // 全周終了
         state.readingSetId = null;
         state.readingPass = 0;
         render();
@@ -775,7 +831,8 @@ function doReadEssay(setId) {
     const u = new SpeechSynthesisUtterance(sentences[idx++]);
     u.lang = 'en-US';
     if (enVoice) u.voice = enVoice;
-    u.rate = 0.95;
+    u.rate = rate;
+    u.pitch = pitch;
     u.onend = speakNext;
     u.onerror = () => {
       if (state.readingSetId === setId) { state.readingSetId = null; state.readingPass = 0; render(); }
@@ -783,6 +840,24 @@ function doReadEssay(setId) {
     synth.speak(u);
   };
   speakNext();
+}
+
+/* 設定画面：現在の音読設定で短いサンプルを再生する */
+function testRead() {
+  const synth = window.speechSynthesis;
+  if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+    state.error = 'このブラウザは読み上げ（音声合成）に対応していません。';
+    render();
+    return;
+  }
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance('This is a sample of the reading voice for your essay.');
+  u.lang = 'en-US';
+  const v = pickReadVoice();
+  if (v) u.voice = v;
+  u.rate = readRate();
+  u.pitch = readPitch();
+  synth.speak(u);
 }
 
 /* 指定観点での Body 書き直しモーダル */
@@ -1882,6 +1957,8 @@ $app.addEventListener('click', (ev) => {
     if (inp) inp.type = state.showKeyword ? 'text' : 'password';
     el.textContent = state.showKeyword ? '🙈 隠す' : '👁 表示';
   }
+  else if (a === 'test-read') { testRead(); }
+  else if (a === 'test-read-stop') { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} }
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
     state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
@@ -2201,6 +2278,15 @@ $app.addEventListener('input', (ev) => {
     const s = sets.find(x => x.id === ev.target.dataset.id);
     if (s) { s.memo = ev.target.value; saveSetsList(sets); }
   }
+  // 音読の速さ・声の高さは即保存し、表示値だけ更新する（スライダーを飛ばさない）
+  if (ev.target.id === 'readRate') {
+    localStorage.setItem(LS.readRate, ev.target.value);
+    const b = document.getElementById('rateVal'); if (b) b.textContent = Number(ev.target.value).toFixed(2);
+  }
+  if (ev.target.id === 'readPitch') {
+    localStorage.setItem(LS.readPitch, ev.target.value);
+    const b = document.getElementById('pitchVal'); if (b) b.textContent = Number(ev.target.value).toFixed(2);
+  }
 });
 
 // ドリルのセレクト（配役・譲歩素材）を state に同期
@@ -2211,6 +2297,8 @@ $app.addEventListener('change', (ev) => {
   if (ev.target.id === 'drillConcession' && state.drill) {
     state.drill.concession = ev.target.value;
   }
+  if (ev.target.id === 'readVoice') localStorage.setItem(LS.readVoice, ev.target.value);
+  if (ev.target.id === 'readRepeat') localStorage.setItem(LS.readRepeat, ev.target.value);
 });
 
 document.getElementById('importFile').addEventListener('change', (ev) => {
@@ -2226,3 +2314,11 @@ seedPresets();
 if (!localStorage.getItem(LS.keyword)) state.modal = 'keyword';
 render();
 cloudInit();
+
+// 音声リストは非同期で読み込まれる。読み込まれたら設定画面を再描画して声の一覧を反映する。
+if (window.speechSynthesis) {
+  try { window.speechSynthesis.getVoices(); } catch (e) { /* prompt loading */ }
+  if (typeof window.speechSynthesis.addEventListener === 'function') {
+    window.speechSynthesis.addEventListener('voiceschanged', () => { if (state.modal === 'settings') render(); });
+  }
+}
