@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Essay Trainer">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b63e6"/>
+      <stop offset="1" stop-color="#2b4bc6"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- 原稿の行 -->
+  <g stroke="#ffffff" stroke-opacity="0.34" stroke-width="13" stroke-linecap="round">
+    <line x1="150" y1="346" x2="362" y2="346"/>
+    <line x1="150" y1="382" x2="362" y2="382"/>
+    <line x1="150" y1="418" x2="300" y2="418"/>
+  </g>
+  <!-- ペン先 -->
+  <path d="M196 152 Q256 120 316 152 L256 322 Z" fill="#ffffff"/>
+  <circle cx="256" cy="186" r="14" fill="#2f50cf"/>
+  <line x1="256" y1="200" x2="256" y2="314" stroke="#2f50cf" stroke-width="10" stroke-linecap="round"/>
+</svg>
