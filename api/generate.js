@@ -36,8 +36,10 @@ BODY 2 — Empirical mode (実証: "it is actually happening"):
 
 BODY 3 — Concession-rebuttal mode (防御: "even the counterargument fails"):
   1 Claim: "Finally, [claim]."
-  2 Concession: "It is true that [a plausible counterargument]." / "While some may argue that [counterargument],"
-  3 Rebuttal: "However, this is not the case, because [why it fails]." / "However, [the limit of that counterargument]."
+  2–3 Concession then rebuttal — pick ONE of these two self-consistent patterns; NEVER mix them:
+     (A) Subordinate "While": 2 "While some may argue that [counterargument]," → 3 "this is not the case, because [why it fails]." — here sentence 3 must NOT start with "However"; the "While" already marks the contrast.
+     (B) Two independent sentences: 2 "It is true that [counterargument]." (or "Admittedly, [counterargument].") → 3 "However, this is not the case, because [why it fails]."
+     GRAMMAR RULE: never write a "While ..." concession and then a "However ..." rebuttal — that double-marks the contrast and is ungrammatical.
   4 Resolution: "Therefore, [why your side prevails]." / "For this reason, [your argument wins]."
   ALTERNATIVE when a clean rebuttal is hard — CONTRAST type: 1 Claim → 2 "In [the conventional approach], [a drawback]." → 3 "With [the approach you support], [an advantage]." → 4 resolution.
 
@@ -344,8 +346,10 @@ function buildRewriteBodyPrompt(topic, stance, bodyIndex, point, mode) {
   } else if (bodyIndex === 2) {
     roleSpec = `Role: BODY 3 — Concession-rebuttal. Four sentences:
   1 Claim: "Finally, [claim]."
-  2 Concession: "It is true that [a counterargument]." / "While some may argue that [counterargument],"
-  3 Rebuttal: "However, this is not the case, because [why it fails]." / "However, [its limit]."
+  2–3 Concession then rebuttal — pick ONE self-consistent pattern, NEVER mix:
+     (A) "While some may argue that [counterargument]," → "this is not the case, because [why it fails]." (sentence 3 must NOT begin with "However")
+     (B) "It is true that [counterargument]." → "However, this is not the case, because [why it fails]."
+     Never pair a "While ..." concession with a "However ..." rebuttal (double contrast = ungrammatical).
   4 Resolution: "Therefore, [why your side prevails]."`;
   } else if (mode === 'scenario') {
     roleSpec = `Role: BODY 2 — Thought-experiment (NO real facts, statistics, or specific real examples). Four sentences:
