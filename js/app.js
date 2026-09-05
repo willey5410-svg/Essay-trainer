@@ -738,11 +738,20 @@ function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
 }
 
-/* Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする */
+/* Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする。
+   和訳（body.ja）があれば、各段落の直後に「【和訳】…」として一緒にコピーする。 */
 async function doCopyEssay(setId) {
   const set = findSet(setId);
   if (!set) return;
-  const text = set.bodies.map(b => bodyText(b)).filter(Boolean).join('\n\n');
+  let hasJa = false;
+  const text = set.bodies.map(b => {
+    const en = bodyText(b);
+    if (!en) return '';
+    const ja = String((b && b.ja) || '').trim();
+    if (!ja) return en;
+    hasJa = true;
+    return `${en}\n【和訳】${ja}`;
+  }).filter(Boolean).join('\n\n');
   let ok = false;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -765,7 +774,7 @@ async function doCopyEssay(setId) {
     } catch (e) { ok = false; }
   }
   state.error = ok ? null : 'コピーできませんでした。本文を長押し（右クリック）で選択してください。';
-  state.notice = ok ? 'Body 1〜3 の全文をコピーしました' : null;
+  state.notice = ok ? (hasJa ? 'Body 1〜3 の全文と和訳をコピーしました' : 'Body 1〜3 の全文をコピーしました') : null;
   render();
 }
 
