@@ -672,6 +672,13 @@ function snapshotPrev(body) {
   body.prev = bodySnapshot(body);
 }
 
+/* Body を書き換える（編集・書き直し・型切替）直前の共通処理：
+   直前状態を prev に退避し、初回だけ「生成直後の原文」を original に退避する。 */
+function beginBodyMutation(body) {
+  snapshotPrev(body);
+  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
+}
+
 /* 現在の状態と prev を入れ替える（もう一度押すと元に戻る＝二段のトグル）。 */
 function swapPrev(body) {
   if (!body.prev) return;
@@ -704,9 +711,7 @@ function applyBodyEdit() {
     render();
     return;
   }
-  snapshotPrev(body); // 直前の状態を退避（「直前に戻す」で復帰できる）
-  // 書き換え前の Body をスナップショット（初回のみ）。以降の編集でも真の原文を保持する。
-  if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
+  beginBodyMutation(body); // 直前状態を退避し、初回だけ原文を保持
   body.sentences = newSentences;
   // 和訳は本文と食い違った状態になる。再採点（evaluate）が本文に合わせて作り直すまで、
   // 「編集前の和訳」であることを画面に示すための印を立てておく。
@@ -723,6 +728,22 @@ function applyBodyEdit() {
 /* 合言葉があれば採点をバックグラウンドで走らせる（無ければ「採点する」ボタンから手動実行） */
 function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
+}
+
+/* 合言葉が未入力なら合言葉モーダルを開いて true を返す（呼び出し側は return する）。 */
+function requireKeyword(message) {
+  if (localStorage.getItem(LS.keyword)) return false;
+  state.modal = 'keyword';
+  state.keywordError = message;
+  render();
+  return true;
+}
+
+/* 401（合言葉不一致）時：合言葉をクリアして再入力を促す状態にする（render はしない）。 */
+function authErrorState(message) {
+  localStorage.removeItem(LS.keyword);
+  state.modal = 'keyword';
+  state.keywordError = message || '合言葉が正しくありません。もう一度入力してください。';
 }
 
 /* Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする。
@@ -884,12 +905,7 @@ async function doRewriteBody() {
   if (input) br.text = input.value;
   const point = (br.text || '').trim();
   if (!point) { br.error = '観点を入力してください'; render(); return; }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '書き直しには合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('書き直しには合言葉の入力が必要です')) return;
   br.busy = true;
   br.error = null;
   render();
@@ -898,8 +914,7 @@ async function doRewriteBody() {
     const sets = getSets();
     const s2 = sets.find(s => s.id === br.setId);
     const body = s2.bodies[br.bodyIdx];
-    snapshotPrev(body); // 直前の状態を退避（「直前に戻す」で復帰できる）
-    if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
+    beginBodyMutation(body);
     body.argument = nb.argument;
     body.sentences = nb.sentences;
     body.ja = nb.ja;
@@ -914,14 +929,7 @@ async function doRewriteBody() {
     autoRescore(s2.id);
     return;
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-      state.bodyRewrite = null;
-      render();
-      return;
-    }
+    if (e.code === 'UNAUTHORIZED') { authErrorState(); state.bodyRewrite = null; render(); return; }
     br.error = '書き直しに失敗しました：' + e.message;
   }
   br.busy = false;
@@ -934,12 +942,7 @@ async function doSwitchBody2(targetMode) {
   const set = findSet(state.setId);
   if (!set) return;
   if (set.pinned) { state.notice = '保護中のエッセイは変更できません。先に保護を解除してください。'; render(); return; }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '型の切り替えには合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('型の切り替えには合言葉の入力が必要です')) return;
   state.switchingBody2 = true;
   state.error = null;
   render();
@@ -948,8 +951,7 @@ async function doSwitchBody2(targetMode) {
     const sets = getSets();
     const s2 = sets.find(s => s.id === set.id);
     const body = s2.bodies[1];
-    snapshotPrev(body); // 直前の状態を退避（「直前に戻す」で復帰できる）
-    if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
+    beginBodyMutation(body);
     body.argument = nb.argument;
     body.sentences = nb.sentences;
     body.ja = nb.ja;
@@ -963,11 +965,7 @@ async function doSwitchBody2(targetMode) {
     autoRescore(s2.id);
     return;
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
+    if (e.code === 'UNAUTHORIZED') authErrorState(); else {
       state.error = '型の切り替えに失敗しました：' + e.message;
     }
   }
@@ -1087,12 +1085,7 @@ function drillStage1(d) {
 async function doFillDrillChanges() {
   const d = state.drill;
   if (!d || d.fillingChanges) return;
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '増減リストの生成には合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('増減リストの生成には合言葉の入力が必要です')) return;
   d.fillingChanges = true;
   d.error = null;
   render();
@@ -1105,11 +1098,7 @@ async function doFillDrillChanges() {
     d.changes = existing.concat(additions).slice(0, 6);
     if (!d.changes.length) d.changes = gen.slice(0, 6);
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
+    if (e.code === 'UNAUTHORIZED') authErrorState(); else {
       d.error = '増減リストの生成に失敗しました：' + e.message;
     }
   }
@@ -1153,12 +1142,7 @@ async function doFillDrillScan() {
   if (!d || d.fillingScan) return;
   const changes = d.changes.filter(c => c.text.trim());
   if (changes.length < 2) { d.error = '先に増減リストを2件以上入力してください'; render(); return; }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '走査の生成には合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('走査の生成には合言葉の入力が必要です')) return;
   d.fillingScan = true;
   d.error = null;
   render();
@@ -1178,11 +1162,7 @@ async function doFillDrillScan() {
     }
     if (!added) d.error = 'Gemini の走査結果はすべて既存セルと重複していました';
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
+    if (e.code === 'UNAUTHORIZED') authErrorState(); else {
       d.error = '走査の生成に失敗しました：' + e.message;
     }
   }
@@ -1239,12 +1219,7 @@ async function doFillDrillFilter() {
   if (!d || d.fillingFilter) return;
   const side = d.candidates.filter(c => c.side === d.stance);
   if (side.length < 3) { d.error = 'この側の候補が3つ未満です。走査に戻って追加してください'; render(); return; }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = 'フィルタの生成には合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('フィルタの生成には合言葉の入力が必要です')) return;
   d.fillingFilter = true;
   d.error = null;
   render();
@@ -1274,11 +1249,7 @@ async function doFillDrillFilter() {
     if (picked.length) d.finalists = picked;
     else d.error = 'フィルタの生成結果を候補に対応づけられませんでした';
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
+    if (e.code === 'UNAUTHORIZED') authErrorState(); else {
       d.error = 'フィルタの生成に失敗しました：' + e.message;
     }
   }
@@ -1438,12 +1409,7 @@ async function doDrillJudge() {
   if (!d || d.busy) return;
   const seen = new Set(d.casting);
   if (seen.size !== 3) { d.error = '配役が重複しています。3観点を別々の Body に割り当ててください'; render(); return; }
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = '講評には合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('講評には合言葉の入力が必要です')) return;
   stopDrillTimer();
   d.busy = true;
   d.error = null;
@@ -1487,15 +1453,9 @@ async function doDrillJudge() {
     });
     saveDrills(drills);
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-      d.stage = 4;
-    } else {
-      d.error = '講評に失敗しました：' + e.message;
-      d.stage = 4;
-    }
+    if (e.code === 'UNAUTHORIZED') authErrorState();
+    else d.error = '講評に失敗しました：' + e.message;
+    d.stage = 4;
   }
   d.busy = false;
   render();
@@ -1621,12 +1581,7 @@ async function doChatSend() {
   const input = document.getElementById('chatInput');
   const message = (input ? input.value : state.chatDraft).trim();
   if (!message) return;
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = 'チャットには合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('チャットには合言葉の入力が必要です')) return;
   const setId = state.chatSetId;
   const sets = getSets();
   const set = sets.find(s => s.id === setId);
@@ -1650,14 +1605,7 @@ async function doChatSend() {
       saveSetsList(sets2);
     }
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-      state.chatBusy = false;
-      render();
-      return;
-    }
+    if (e.code === 'UNAUTHORIZED') { authErrorState(); state.chatBusy = false; render(); return; }
     state.chatError = '送信に失敗しました：' + e.message;
   }
   state.chatBusy = false;
@@ -1845,13 +1793,8 @@ async function runBackgroundEvaluation(setId) {
   // 失敗時は静かに諦めず、理由を伝える（合言葉切れ・クオータ超過などで
   // 「採点する」を押しても画面が変わらない、という状態を防ぐ）
   if (failure) {
-    if (failure.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '採点には合言葉が必要です。もう一度入力してください。';
-    } else {
-      state.error = '採点に失敗しました：' + failure.message;
-    }
+    if (failure.code === 'UNAUTHORIZED') authErrorState('採点には合言葉が必要です。もう一度入力してください。');
+    else state.error = '採点に失敗しました：' + failure.message;
   }
   if (state.view === 'study' && state.setId === setId) render();
   else if (failure) render();
@@ -1868,12 +1811,7 @@ function regenerateEssay(setId) {
 }
 
 async function doGenerateEssay(theme, stance, worksheet, drillId) {
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('エッセイ生成には合言葉の入力が必要です')) return;
   state.modal = null;
   state.view = 'loading';
   state.loadingText = worksheet
@@ -1893,11 +1831,7 @@ async function doGenerateEssay(theme, stance, worksheet, drillId) {
     runBackgroundEvaluation(set.id); // 採点は別リクエストでバックグラウンド実行（生成をブロックしない）
   } catch (e) {
     state.view = 'home';
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
+    if (e.code === 'UNAUTHORIZED') authErrorState(); else {
       state.error = '生成に失敗しました：' + e.message;
     }
   }
@@ -1905,12 +1839,7 @@ async function doGenerateEssay(theme, stance, worksheet, drillId) {
 }
 
 async function doGenerateThemes() {
-  if (!localStorage.getItem(LS.keyword)) {
-    state.modal = 'keyword';
-    state.keywordError = 'テーマ生成には合言葉の入力が必要です';
-    render();
-    return;
-  }
+  if (requireKeyword('テーマ生成には合言葉の入力が必要です')) return;
   state.busyThemes = true;
   render();
   try {
@@ -1924,11 +1853,7 @@ async function doGenerateThemes() {
     state.notice = `${themes.length} 件のテーマ案を追加しました`;
     state.error = null;
   } catch (e) {
-    if (e.code === 'UNAUTHORIZED') {
-      localStorage.removeItem(LS.keyword);
-      state.modal = 'keyword';
-      state.keywordError = '合言葉が正しくありません。もう一度入力してください。';
-    } else {
+    if (e.code === 'UNAUTHORIZED') authErrorState(); else {
       state.error = 'テーマ生成に失敗しました：' + e.message;
     }
   }
@@ -2232,12 +2157,7 @@ $app.addEventListener('click', (ev) => {
     render();
   }
   else if (a === 'choose-stance') {
-    if (!localStorage.getItem(LS.keyword)) {
-      state.modal = 'keyword';
-      state.keywordError = 'エッセイ生成には合言葉の入力が必要です';
-      render();
-      return;
-    }
+    if (requireKeyword('エッセイ生成には合言葉の入力が必要です')) return;
     state.pendingStance = el.dataset.stance;
     doGenerateEssay(state.pendingTheme, state.pendingStance);
   }
