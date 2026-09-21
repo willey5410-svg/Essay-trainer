@@ -95,7 +95,7 @@ function renderSentence(s, ctx) {
     if (i % 2) return esc(seg); // 定型表現
     if (!seg.trim()) return seg ? esc(seg) : '';
     if (ctx) {
-      return `<span class="free tap" data-action="open-body-edit" data-body="${ctx.bi}" data-focus="fe-${ctx.si}-${i}" title="タップして編集">${esc(seg)}</span>`;
+      return `<span class="free tap" data-action="open-body-edit" data-body="${ctx.bi}" data-focus="es-${ctx.si}" title="タップして編集">${esc(seg)}</span>`;
     }
     return `<span class="free">${esc(seg)}</span>`;
   }).join('');
@@ -427,7 +427,7 @@ function viewStudy() {
       ${linesHtml}
       ${jaShown && body.ja ? `<p class="ja-text${body.jaStale ? ' stale' : ''}">${body.jaStale ? '<span class="ja-stale-note">⚠️ 編集前の和訳です（再採点で編集後の内容に更新されます）</span>' : ''}${esc(body.ja)}</p>` : ''}
       <div class="row">
-        ${locked ? '' : `<button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>`}
+        ${locked ? '' : `<button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 本文を編集</button>`}
         ${locked ? '' : `<button class="btn small ghost" data-action="open-rewrite-body" data-body="${bi}">🔁 観点を指定して書き直す</button>`}
         ${switchBtn}
         ${body.ja ? `<button class="btn small ghost" data-action="toggle-ja" data-body="${bi}">${jaShown ? '和訳を隠す' : '和訳を表示'}</button>` : ''}
@@ -455,7 +455,7 @@ function viewStudy() {
       ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
     </div>
     ${argSummaryCard(set)}
-    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。色付き部分は<strong>タップで編集</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
+    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。<span class="free">色付き部分</span>をタップ、または<strong>「✏️ 本文を編集」</strong>から<strong>全文を自由に修正</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
     ${evalSection(set)}
     ${bodiesHtml}
     <div class="card memo-card">
@@ -627,16 +627,7 @@ function modalStance() {
   </div>`;
 }
 
-/* ---------- 色付き（自由作文）部分の手直し ---------- */
-
-/* 文を「定型表現（ロック）」と「自由部分（入力欄）」に分け、自由部分だけ編集させる。
-   保存時は編集値と定型表現を元の順序で連結し直し、余分な空白を整えて1文に戻す。 */
-function normalizeSentence(parts) {
-  return parts.map(x => String(x).trim()).filter(Boolean).join(' ')
-    .replace(/\s+([.,;:!?])/g, '$1')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
+/* ---------- 本文の手直し（全文編集） ---------- */
 
 function modalBodyEdit() {
   const be = state.bodyEdit;
@@ -645,20 +636,17 @@ function modalBodyEdit() {
   const body = set.bodies[be.bodyIdx];
   const role = roleForBody(be.bodyIdx, body);
   const linesHtml = (body.sentences || []).map((s, si) => {
-    const inner = String(s).split(TPL_RE).map((seg, gi) => {
-      if (gi % 2) return esc(seg); // 定型表現はロック
-      if (!seg.trim()) return ''; // 定型表現の前後などの構造的な空白には入力欄を出さない
-      const id = `fe-${si}-${gi}`;
-      const val = (be.vals && id in be.vals) ? be.vals[id] : seg.trim();
-      const size = Math.max(6, Math.min(44, val.length + 2));
-      return `<input class="free-input" id="${id}" value="${esc(val)}" size="${size}" spellcheck="false">`;
-    }).join(' ');
-    return `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${inner}</p>`;
+    const id = `es-${si}`;
+    const val = (be.vals && id in be.vals) ? be.vals[id] : String(s);
+    return `<div class="edit-line">
+      <label class="fn-tag" for="${id}">${esc(role.functions[si] || `文${si + 1}`)}</label>
+      <textarea class="sent-input" id="${id}" rows="2" spellcheck="false">${esc(val)}</textarea>
+    </div>`;
   }).join('');
   return `<div class="overlay" data-action="close-modal">
     <div class="modal" data-stop>
-      <h3>✏️ ${role.name} の内容を編集</h3>
-      <p class="hint-text">黒字の定型表現は固定です。<span class="free">色付きの入力欄</span>だけを書き換えられます。保存すると採点をやり直し、和訳も編集後の内容に作り直します（元に戻すこともできます）。</p>
+      <h3>✏️ ${role.name} の本文を編集</h3>
+      <p class="hint-text">各文を全文そのまま自由に書き換えられます（定型表現も含めてすべて編集できます）。保存すると採点をやり直し、和訳も編集後の内容に作り直します（元に戻すこともできます）。</p>
       ${linesHtml}
       ${be.error ? `<p class="field-error">${esc(be.error)}</p>` : ''}
       <div class="row">
@@ -709,13 +697,10 @@ function applyBodyEdit() {
   if (!set) return;
   const body = set.bodies[be.bodyIdx];
   const newSentences = (body.sentences || []).map((s, si) => {
-    const parts = String(s).split(TPL_RE).map((seg, gi) => {
-      if (gi % 2) return seg; // 定型表現はそのまま
-      const id = `fe-${si}-${gi}`;
-      const dom = document.getElementById(id);
-      return dom ? dom.value : (be.vals && id in be.vals ? be.vals[id] : seg);
-    });
-    return normalizeSentence(parts);
+    const id = `es-${si}`;
+    const dom = document.getElementById(id);
+    const raw = dom ? dom.value : (be.vals && id in be.vals ? be.vals[id] : s);
+    return String(raw).replace(/\s+/g, ' ').trim(); // 改行・連続空白を1つに詰める
   });
   if (newSentences.some(s => !s)) {
     be.error = '空になった文があります。各文に内容を入力してください。';
@@ -2093,13 +2078,11 @@ $app.addEventListener('click', (ev) => {
     if (!set) return;
     if (set.pinned) { state.notice = '保護中のエッセイは本文を編集できません。先に保護を解除してください。'; render(); return; }
     const vals = {};
-    (set.bodies[bi].sentences || []).forEach((s, si) => {
-      String(s).split(TPL_RE).forEach((seg, gi) => { if (gi % 2 === 0) vals[`fe-${si}-${gi}`] = seg.trim(); });
-    });
+    (set.bodies[bi].sentences || []).forEach((s, si) => { vals[`es-${si}`] = String(s); });
     state.bodyEdit = { setId: set.id, bodyIdx: bi, vals, error: null };
     state.modal = 'bodyEdit';
     render();
-    const focusId = el.dataset.focus; // 色付き部分を直接タップした場合はその入力欄へ
+    const focusId = el.dataset.focus; // タップした文の入力欄へ
     if (focusId) {
       const inp = document.getElementById(focusId);
       if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
@@ -2280,7 +2263,7 @@ $app.addEventListener('keydown', (ev) => {
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
 $app.addEventListener('input', (ev) => {
   if (ev.target.id === 'chatInput') state.chatDraft = ev.target.value;
-  if (ev.target.classList.contains('free-input') && state.bodyEdit) {
+  if (ev.target.classList.contains('sent-input') && state.bodyEdit) {
     state.bodyEdit.vals[ev.target.id] = ev.target.value;
   }
   // ドリルの各入力を state に同期

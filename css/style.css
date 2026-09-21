@@ -185,6 +185,16 @@ section { margin-bottom: 8px; }
   border-radius: 6px; padding: 2px 6px; margin: 2px 0; max-width: 100%;
 }
 .free-input:focus { outline: none; border-color: var(--accent); }
+/* 本文まるごと編集モーダル：1文＝1テキストエリア */
+.edit-line { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; }
+.edit-line .fn-tag { flex: 0 0 auto; margin-top: 8px; margin-right: 0; }
+.sent-input {
+  flex: 1 1 auto; min-width: 0; width: 100%;
+  font-family: inherit; font-size: 0.95rem; line-height: 1.6; color: var(--text);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; resize: vertical; box-sizing: border-box;
+}
+.sent-input:focus { outline: none; border-color: var(--accent); }
 .stat { color: var(--sub); font-size: 0.8rem; }
 .ja-text {
   background: var(--bg); border-radius: 8px; padding: 10px 12px;
