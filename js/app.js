@@ -59,6 +59,8 @@ let state = {
   pendingStance: null,
   themeAddError: null,
   themeDraft: { en: '', ja: '', cat: null },
+  pasteDraft: { topic: '', topicJa: '', stance: 'agree', text: '' }, // 自作エッセイ貼り付けフォーム
+  pasteError: null,
   loadingText: '',
   setId: null,
   showJa: {},
@@ -304,6 +306,7 @@ function render() {
   if (state.modal === 'themeAdd') html += modalThemeAdd();
   if (state.modal === 'bodyEdit') html += modalBodyEdit();
   if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
+  if (state.modal === 'pasteEssay') html += modalPasteEssay();
   if (state.modal === 'drillCell') html += modalDrillCell();
   if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
@@ -335,7 +338,7 @@ function viewHome() {
     return `<div class="card set-card">
       <div class="set-info" data-action="open-set" data-id="${esc(s.id)}">
         <div class="set-topic">${esc(s.topic)}</div>
-        <div class="set-sub">${esc(s.topicJa || '')} ${stanceBadge(s.stance)} ${s.source === 'gemini' ? '<span class="badge src">Gemini</span>' : '<span class="badge src">サンプル</span>'}</div>
+        <div class="set-sub">${esc(s.topicJa || '')} ${stanceBadge(s.stance)} ${s.source === 'gemini' ? '<span class="badge src">Gemini</span>' : s.source === 'self' ? '<span class="badge src">自作</span>' : '<span class="badge src">サンプル</span>'}</div>
       </div>
       <div class="set-side">
         ${s.pinned ? '<span class="cloud-badge" title="保護中（削除・再生成で消えません）">🔒 保護</span>' : ''}
@@ -373,6 +376,11 @@ function viewHome() {
     <section>
       <h2>📚 学習中のエッセイ</h2>
       ${setItems}
+    </section>
+    <section>
+      <h2>✍️ 自分のエッセイを取り込む</h2>
+      <p class="hint-text">自分で書いた Body 1〜3 を空行で区切って貼り付けると、同じ表示形式で取り込めます。取り込み後に「採点する」を押すと、観点（3観点）・主体×領域・スコアも埋まります。</p>
+      <button class="btn wide ghost" data-action="open-paste-essay">＋ 本文を貼り付けて取り込む</button>
     </section>
     ${DRILL_ENABLED ? `<section>
       <h2>🧠 観点だしドリル（マトリクス走査）</h2>
@@ -1716,6 +1724,78 @@ function doSaveTheme() {
   render();
 }
 
+/* 自作エッセイの貼り付けフォーム */
+function modalPasteEssay() {
+  const d = state.pasteDraft;
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>✍️ 自分のエッセイを貼り付け</h3>
+      <p class="hint-text">本論の <strong>Body 1〜3</strong> を、段落の間を<strong>空行</strong>で区切って貼り付けてください（導入・結論は除く）。各段落は文ごとに分割され、今の表示形式で保存されます。取り込み後に「採点する」で観点・主体×領域・スコアが付きます。</p>
+      <label>お題（英語・任意）</label>
+      <input type="text" id="pasteTopic" value="${esc(d.topic)}" placeholder="例：Should Japan accept more immigrants?">
+      <label>お題の日本語訳（任意）</label>
+      <input type="text" id="pasteTopicJa" value="${esc(d.topicJa)}" placeholder="例：日本はより多くの移民を受け入れるべきか">
+      <label>立場</label>
+      <select id="pasteStance">
+        <option value="agree"${d.stance === 'agree' ? ' selected' : ''}>賛成（YES）</option>
+        <option value="disagree"${d.stance === 'disagree' ? ' selected' : ''}>反対（NO）</option>
+      </select>
+      <label>本文（Body 1〜3 を空行で区切る）</label>
+      <textarea id="pasteText" class="paste-input" rows="10" spellcheck="false" placeholder="First of all, …（Body 1）&#10;&#10;Secondly, …（Body 2）&#10;&#10;Finally, …（Body 3）">${esc(d.text)}</textarea>
+      ${state.pasteError ? `<p class="field-error">${esc(state.pasteError)}</p>` : ''}
+      <div class="row">
+        <button class="btn" data-action="paste-essay-submit">取り込む</button>
+        <button class="btn ghost" data-action="close-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function doCreateFromPaste() {
+  const val = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+  const topic = val('pasteTopic').trim();
+  const topicJa = val('pasteTopicJa').trim();
+  const stance = val('pasteStance') === 'disagree' ? 'disagree' : 'agree';
+  const text = val('pasteText');
+  state.pasteDraft = { topic, topicJa, stance, text }; // 再描画で入力が消えないよう保持
+
+  // 空行で段落（Body）に分割
+  const paras = text.split(/\n\s*\n+/).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (paras.length !== 3) {
+    state.pasteError = `Body 1〜3 を空行で区切って3段落で貼り付けてください（現在 ${paras.length} 段落を検出）。`;
+    render();
+    return;
+  }
+  // 各段落を文単位に分割（.?! の後ろで区切る）
+  const splitSentences = (p) => p.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  const bodies = paras.map(p => {
+    const sentences = splitSentences(p);
+    return { argument: '', sentences: sentences.length ? sentences : [p], ja: '' };
+  });
+
+  const set = {
+    id: 'own-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    topic: topic || '自作エッセイ',
+    topicJa,
+    stance,
+    source: 'self',
+    createdAt: Date.now(),
+    bodies,
+    evaluation: null,
+  };
+  const sets = getSets();
+  sets.unshift(set);
+  saveSetsList(sets);
+  state.modal = null;
+  state.pasteError = null;
+  state.pasteDraft = { topic: '', topicJa: '', stance: 'agree', text: '' };
+  state.setId = set.id;
+  state.showJa = {};
+  state.view = 'study';
+  state.notice = '自作エッセイを取り込みました。「この構成を採点する」で観点・主体×領域・スコアを付けられます。';
+  render();
+}
+
 function deleteTheme(idx) {
   const theme = visibleThemes()[idx];
   if (!theme || !confirm(`テーマ「${theme.topic}」を削除しますか？`)) return;
@@ -1969,7 +2049,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
     state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
-    state.bodyRewrite = null;
+    state.bodyRewrite = null; state.pasteError = null;
     render();
   }
   /* ---- 観点だしドリル ---- */
@@ -2154,6 +2234,8 @@ $app.addEventListener('click', (ev) => {
     render();
   }
   else if (a === 'save-theme') { doSaveTheme(); }
+  else if (a === 'open-paste-essay') { state.pasteError = null; state.modal = 'pasteEssay'; render(); }
+  else if (a === 'paste-essay-submit') { doCreateFromPaste(); }
   else if (a === 'delete-theme') { deleteTheme(Number(el.dataset.idx)); }
   else if (a === 'restore-themes') {
     saveHiddenThemes([]);
