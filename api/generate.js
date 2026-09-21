@@ -458,8 +458,10 @@ Finally, classify EACH of the three bodies on two axes, choosing EXACTLY ONE lab
 - "domain" (which field/value it is mainly about): one of [${ARG_DOMAIN_ENS.join(' | ')}]
 Return them in order as "axes":[{"layer":"...","domain":"..."},{...},{...}] using the EXACT English labels above.
 
+Also translate EACH of the three body paragraphs into natural JAPANESE, faithfully reflecting the paragraph EXACTLY AS WRITTEN above (including any wording the learner has edited). Translate every sentence of the paragraph into one continuous Japanese paragraph — do not summarize, do not add or drop content, and do not comment on the writing. Return them in order as "translations":["body1","body2","body3"]. Japanese only.
+
 Return ONLY this JSON:
-{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}, "arguments": ["...", "...", "..."], "axes": [{"layer": "...", "domain": "..."}, {"layer": "...", "domain": "..."}, {"layer": "...", "domain": "..."}]}`;
+{"structure": 0.0, "content": 0.0, "language": 0.0, "comments": {"structure": "...", "content": "...", "language": "..."}, "arguments": ["...", "...", "..."], "axes": [{"layer": "...", "domain": "..."}, {"layer": "...", "domain": "..."}, {"layer": "...", "domain": "..."}], "translations": ["...", "...", "..."]}`;
 }
 
 function normalizeEval(raw) {
@@ -812,7 +814,10 @@ module.exports = async (req, res) => {
     if (!paragraphs) return res.status(400).json({ error: 'bodies が不正です' });
     try {
       const result = await evaluateEssay(topic.trim().slice(0, 300), stance, paragraphs, apiKey, model);
-      return res.status(200).json({ evaluation: result.evaluation, arguments: result.arguments, axes: result.axes });
+      return res.status(200).json({
+        evaluation: result.evaluation, arguments: result.arguments,
+        axes: result.axes, translations: result.translations,
+      });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }
@@ -895,5 +900,12 @@ async function evaluateEssay(topic, stance, paragraphs, apiKey, model) {
     });
     if (parsed.every(a => a.layer && a.domain)) axes = parsed;
   }
-  return { evaluation: ev, arguments: refreshedArguments, axes };
+  // 各Bodyの和訳。本文（編集後の内容）に合わせて作り直したもの。3件そろい、
+  // すべて日本語を含むときだけ有効とする（英文のまま返ってきた場合は捨てる）。
+  let translations = null;
+  if (Array.isArray(raw.translations) && raw.translations.length === 3) {
+    const list = raw.translations.map(t => String(t || '').trim().slice(0, 1000));
+    if (list.every(t => t && JA_CHAR_RE.test(t))) translations = list;
+  }
+  return { evaluation: ev, arguments: refreshedArguments, axes, translations };
 }

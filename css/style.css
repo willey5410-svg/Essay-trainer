@@ -190,6 +190,9 @@ section { margin-bottom: 8px; }
   background: var(--bg); border-radius: 8px; padding: 10px 12px;
   font-size: 0.85rem; color: var(--sub); margin-top: 10px;
 }
+/* 本文を編集したあと、再採点で和訳が作り直されるまでの「編集前の和訳」表示 */
+.ja-text.stale { border: 1px dashed var(--amber); }
+.ja-stale-note { display: block; color: var(--amber); font-size: 0.78rem; margin-bottom: 6px; }
 
 /* slots */
 .slot { border-radius: 6px; padding: 0 4px; }
