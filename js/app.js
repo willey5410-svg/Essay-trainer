@@ -87,20 +87,9 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/* テンプレート定型表現の検出用正規表現（1つの捕捉グループを持つので split で偶数=自由部/奇数=定型部になる） */
-const TPL_RE = new RegExp('(' + TEMPLATE_PHRASES.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
-
-/* 1文をHTMLへ：テンプレ定型表現は通常色、それ以外（生成された内容）は .free で色を変える。
-   ctx（{bi, si}）を渡すと、色付き部分をタップで編集できるようにする（スタディ画面用）。 */
-function renderSentence(s, ctx) {
-  return String(s).split(TPL_RE).map((seg, i) => {
-    if (i % 2) return esc(seg); // 定型表現
-    if (!seg.trim()) return seg ? esc(seg) : '';
-    if (ctx) {
-      return `<span class="free tap" data-action="open-body-edit" data-body="${ctx.bi}" data-focus="es-${ctx.si}" title="タップして編集">${esc(seg)}</span>`;
-    }
-    return `<span class="free">${esc(seg)}</span>`;
-  }).join('');
+/* 1文をHTMLへ：色分けはせず、そのまま表示する（本文の編集は「本文を編集」ボタンから）。 */
+function renderSentence(s) {
+  return esc(String(s));
 }
 
 function readJSON(key, fallback) {
@@ -414,7 +403,7 @@ function viewStudy() {
     const locked = !!set.pinned; // 保護中は本文を編集不可（タップ編集・書き直し・切替を無効化）
     const sentences = Array.isArray(body.sentences) ? body.sentences : [];
     const linesHtml = sentences.map((s, si) =>
-      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${renderSentence(s, locked ? null : { bi, si })}</p>`
+      `<p class="study-line"><span class="fn-tag">${esc(role.functions[si] || '')}</span>${renderSentence(s)}</p>`
     ).join('');
     const wc = bodyText(body).split(/\s+/).filter(Boolean).length;
     const jaShown = state.showJa[bi];
@@ -463,7 +452,7 @@ function viewStudy() {
       ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
     </div>
     ${argSummaryCard(set)}
-    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。<span class="free">色付き部分</span>をタップ、または<strong>「✏️ 本文を編集」</strong>から<strong>全文を自由に修正</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
+    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能です。<strong>「✏️ 本文を編集」</strong>から<strong>全文を自由に修正</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
     ${evalSection(set)}
     ${bodiesHtml}
     <div class="card memo-card">
