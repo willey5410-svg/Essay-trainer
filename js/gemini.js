@@ -75,7 +75,9 @@ async function generateEssaySet(theme, stance, worksheet) {
 }
 
 /* 生成済みエッセイの採点（生成とは別リクエストで、Gemini呼び出し1回のみ）。
-   採点に加えて、本文に合わせて最新化した各Bodyの観点（arguments）も返す。 */
+   採点に加えて、本文に合わせて最新化した各Bodyの観点（arguments）と
+   和訳（translations）も返す。色付き部分を編集したあとの再採点で、
+   和訳を編集後の内容に合わせ直すために使う。 */
 async function evaluateEssaySet(set) {
   const data = await apiCall({ mode: 'evaluate', topic: set.topic, stance: set.stance, bodies: set.bodies });
   if (!data || !data.evaluation) throw new Error('採点結果の形式が不正です');
@@ -83,6 +85,7 @@ async function evaluateEssaySet(set) {
     evaluation: data.evaluation,
     arguments: Array.isArray(data.arguments) ? data.arguments : null,
     axes: Array.isArray(data.axes) ? data.axes : null,
+    translations: Array.isArray(data.translations) ? data.translations : null,
   };
 }
 

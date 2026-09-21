@@ -425,7 +425,7 @@ function viewStudy() {
         <span class="stat">${wc} 語</span>
       </div>
       ${linesHtml}
-      ${jaShown && body.ja ? `<p class="ja-text">${esc(body.ja)}</p>` : ''}
+      ${jaShown && body.ja ? `<p class="ja-text${body.jaStale ? ' stale' : ''}">${body.jaStale ? '<span class="ja-stale-note">⚠️ 編集前の和訳です（再採点で編集後の内容に更新されます）</span>' : ''}${esc(body.ja)}</p>` : ''}
       <div class="row">
         ${locked ? '' : `<button class="btn small ghost" data-action="open-body-edit" data-body="${bi}">✏️ 色付き部分を編集</button>`}
         ${locked ? '' : `<button class="btn small ghost" data-action="open-rewrite-body" data-body="${bi}">🔁 観点を指定して書き直す</button>`}
@@ -455,7 +455,7 @@ function viewStudy() {
       ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
     </div>
     ${argSummaryCard(set)}
-    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。色付き部分は<strong>タップで編集</strong>でき、保存すると再採点されます。</p>
+    <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能、<span class="free">色付きの部分</span>がテーマに応じて変わる内容で、黒字はテンプレートの定型表現です。色付き部分は<strong>タップで編集</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
     ${evalSection(set)}
     ${bodiesHtml}
     <div class="card memo-card">
@@ -658,7 +658,7 @@ function modalBodyEdit() {
   return `<div class="overlay" data-action="close-modal">
     <div class="modal" data-stop>
       <h3>✏️ ${role.name} の内容を編集</h3>
-      <p class="hint-text">黒字の定型表現は固定です。<span class="free">色付きの入力欄</span>だけを書き換えられます。保存すると採点をやり直します（元に戻すこともできます）。</p>
+      <p class="hint-text">黒字の定型表現は固定です。<span class="free">色付きの入力欄</span>だけを書き換えられます。保存すると採点をやり直し、和訳も編集後の内容に作り直します（元に戻すこともできます）。</p>
       ${linesHtml}
       ${be.error ? `<p class="field-error">${esc(be.error)}</p>` : ''}
       <div class="row">
@@ -676,6 +676,7 @@ function bodySnapshot(body) {
     argument: body.argument,
     sentences: (body.sentences || []).slice(),
     ja: body.ja || '',
+    jaStale: !!body.jaStale, // 和訳が本文より古いかどうかも一緒に持ち回る
     mode: body.mode,
     original: body.original ? Object.assign({}, body.original) : undefined,
   };
@@ -694,6 +695,7 @@ function swapPrev(body) {
   body.argument = p.argument;
   body.sentences = p.sentences;
   body.ja = p.ja;
+  if (p.jaStale) body.jaStale = true; else delete body.jaStale;
   body.mode = p.mode;
   if (p.original) body.original = p.original; else delete body.original;
   body.prev = cur; // 押し直しで戻れるように現在の状態を保持
@@ -724,11 +726,14 @@ function applyBodyEdit() {
   // 書き換え前の Body をスナップショット（初回のみ）。以降の編集でも真の原文を保持する。
   if (!body.original) body.original = { argument: body.argument, sentences: body.sentences, ja: body.ja || '', mode: body.mode };
   body.sentences = newSentences;
+  // 和訳は本文と食い違った状態になる。再採点（evaluate）が本文に合わせて作り直すまで、
+  // 「編集前の和訳」であることを画面に示すための印を立てておく。
+  if (body.ja) body.jaStale = true;
   set.evaluation = null; // 内容が変わったため採点をやり直す
   saveSetsList(sets);
   state.modal = null;
   state.bodyEdit = null;
-  state.notice = `${(BODY_ROLES[be.bodyIdx] || {}).name || 'Body'} を編集しました。再採点します。`;
+  state.notice = `${(BODY_ROLES[be.bodyIdx] || {}).name || 'Body'} を編集しました。再採点し、和訳も編集後の内容に更新します。`;
   render();
   autoRescore(set.id);
 }
@@ -916,6 +921,7 @@ async function doRewriteBody() {
     body.argument = nb.argument;
     body.sentences = nb.sentences;
     body.ja = nb.ja;
+    delete body.jaStale; // 書き直しでは和訳も一緒に作り直されている
     if (br.bodyIdx === 1) body.mode = nb.mode;
     s2.evaluation = null; // 内容が変わったため採点をやり直す
     saveSetsList(sets);
@@ -965,6 +971,7 @@ async function doSwitchBody2(targetMode) {
     body.argument = nb.argument;
     body.sentences = nb.sentences;
     body.ja = nb.ja;
+    delete body.jaStale; // 型の切り替えでは和訳も一緒に作り直されている
     body.mode = nb.mode;
     s2.evaluation = null; // 内容が変わったため採点をやり直す
     saveSetsList(sets);
@@ -1753,7 +1760,7 @@ async function runBackgroundEvaluation(setId) {
   try {
     const set = findSet(setId);
     if (set) {
-      const { evaluation, arguments: args, axes } = await evaluateEssaySet(set);
+      const { evaluation, arguments: args, axes, translations: trans } = await evaluateEssaySet(set);
       const sets = getSets();
       const s2 = sets.find(s => s.id === setId);
       if (s2) {
@@ -1766,6 +1773,12 @@ async function runBackgroundEvaluation(setId) {
         if (Array.isArray(axes) && axes.length === 3) {
           axes.forEach((ax, i) => {
             if (ax && s2.bodies[i]) { s2.bodies[i].axisLayer = ax.layer || null; s2.bodies[i].axisDomain = ax.domain || null; }
+          });
+        }
+        // 和訳も本文（編集後の内容）に合わせて最新化し、「編集前の和訳」の印を外す
+        if (Array.isArray(trans) && trans.length === 3) {
+          trans.forEach((t, i) => {
+            if (t && s2.bodies[i]) { s2.bodies[i].ja = t; delete s2.bodies[i].jaStale; }
           });
         }
         saveSetsList(sets);
@@ -2117,6 +2130,7 @@ $app.addEventListener('click', (ev) => {
       body.argument = body.original.argument;
       body.sentences = body.original.sentences;
       body.ja = body.original.ja;
+      delete body.jaStale; // 模範解答の和訳は本文と対応している
       body.mode = body.original.mode;
       delete body.original;
       set.evaluation = null; // 内容が変わったため採点をやり直す
