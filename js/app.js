@@ -1375,6 +1375,7 @@ $app.addEventListener('click', (ev) => {
   // モーダル内部のクリックがオーバーレイの close-modal に化けないようにする
   if (stop && el.dataset.action === 'close-modal' && !stop.contains(el)) return;
   const a = el.dataset.action;
+  if (handleDrillAction(a, el)) return; // ドリル関連は drill.js に委譲
 
   if (a === 'open-settings') { state.modal = 'settings'; state.keywordError = null; state.showKeyword = false; render(); }
   else if (a === 'toggle-keyword-vis') {
@@ -1391,106 +1392,6 @@ $app.addEventListener('click', (ev) => {
     state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
     state.bodyRewrite = null; state.pasteError = null;
     render();
-  }
-  /* ---- 観点だしドリル ---- */
-  else if (a === 'drill-start') {
-    const sel = document.getElementById('drillThemeSel');
-    const theme = visibleThemes()[Number(sel ? sel.value : 0)];
-    if (theme) startDrill(theme);
-  }
-  else if (a === 'drill-quit') {
-    // 講評前（未保存）のみ破棄確認。講評済み＝保存済みなので確認不要
-    if (state.drill && !state.drill.review && state.drill.stage < 5 && !confirm('ドリルを中止しますか？（入力内容は破棄されます）')) return;
-    stopDrillTimer();
-    state.drill = null;
-    state.view = 'home';
-    render();
-  }
-  else if (a === 'drill-restart') {
-    const d = state.drill;
-    stopDrillTimer();
-    startDrill({ topic: d.topic, topicJa: d.topicJa });
-  }
-  else if (a === 'drill-add-change') { state.drill.changes.push({ dir: 'inc', text: '' }); render(); }
-  else if (a === 'drill-fill-changes') { doFillDrillChanges(); }
-  else if (a === 'drill-fill-scan') { doFillDrillScan(); }
-  else if (a === 'drill-fill-filter') { doFillDrillFilter(); }
-  else if (a === 'drill-del-change') { state.drill.changes.splice(Number(el.dataset.i), 1); render(); }
-  else if (a === 'drill-toggle-change') {
-    const c = state.drill.changes[Number(el.dataset.i)];
-    c.dir = c.dir === 'inc' ? 'dec' : 'inc';
-    render();
-  }
-  else if (a === 'drill-to-2') { drillGoStage2(); }
-  else if (a === 'drill-back') { state.drill.error = null; state.drill.stage = Number(el.dataset.stage); render(); }
-  else if (a === 'drill-goto') { state.drill.error = null; state.drill.stage = Number(el.dataset.stage); render(); }
-  else if (a === 'drill-cell') {
-    const layer = Number(el.dataset.layer), domain = Number(el.dataset.domain);
-    const c = state.drill.candidates.find(x => x.layer === layer && x.domain === domain);
-    const filled = state.drill.changes.filter(ch => ch.text.trim());
-    const defaultIdx = filled.length === 1 ? state.drill.changes.indexOf(filled[0]) : null;
-    state.cellDraft = {
-      layer, domain, note: c ? c.note : '', side: c ? c.side : 'agree',
-      changeIdx: c ? c.changeIdx : defaultIdx,
-    };
-    state.modal = 'drillCell';
-    render();
-    const inp = document.getElementById('dcNote');
-    if (inp) inp.focus();
-  }
-  else if (a === 'drill-cell-change') { state.cellDraft.changeIdx = Number(el.dataset.idx); render(); }
-  else if (a === 'drill-cell-side') { state.cellDraft.side = el.dataset.side; render(); }
-  else if (a === 'drill-cell-save') {
-    const cd = state.cellDraft;
-    if (cd.changeIdx === null || cd.changeIdx === undefined) return;
-    const note = ((document.getElementById('dcNote') || {}).value || cd.note).trim();
-    if (!note) return;
-    const d = state.drill;
-    const id = `c${cd.layer}-${cd.domain}`;
-    const existing = d.candidates.find(x => x.id === id);
-    if (existing) { existing.note = note; existing.side = cd.side; existing.changeIdx = cd.changeIdx; }
-    else d.candidates.push({ id, layer: cd.layer, domain: cd.domain, note, side: cd.side, changeIdx: cd.changeIdx });
-    state.modal = null;
-    state.cellDraft = null;
-    render();
-  }
-  else if (a === 'drill-cell-del') {
-    const cd = state.cellDraft;
-    const d = state.drill;
-    const id = `c${cd.layer}-${cd.domain}`;
-    d.candidates = d.candidates.filter(x => x.id !== id);
-    d.finalists = d.finalists.filter(x => x !== id);
-    state.modal = null;
-    state.cellDraft = null;
-    render();
-  }
-  else if (a === 'drill-to-3') { state.drill.error = null; state.drill.stage = 3; render(); }
-  else if (a === 'drill-stance') {
-    if (state.drill.stance !== el.dataset.stance) {
-      state.drill.stance = el.dataset.stance;
-      state.drill.finalists = []; // 立場が変わったら選択をやり直す
-    }
-    render();
-  }
-  else if (a === 'drill-finalist') {
-    const d = state.drill;
-    const id = el.dataset.id;
-    if (d.finalists.includes(id)) d.finalists = d.finalists.filter(x => x !== id);
-    else if (d.finalists.length < 3) d.finalists.push(id);
-    else { d.error = '選べるのは3つまでです。先にどれかのチェックを外してください'; render(); return; }
-    d.error = null;
-    render();
-  }
-  else if (a === 'drill-to-4') { drillGoStage4(); }
-  else if (a === 'drill-judge') { doDrillJudge(); }
-  else if (a === 'drill-essay') { doDrillEssay(); }
-  else if (a === 'drill-open') { openDrillRecord(el.dataset.id); }
-  else if (a === 'open-essay-drill') { openDrillRecord(el.dataset.id); }
-  else if (a === 'drill-delete') {
-    if (confirm('このドリル記録を削除しますか？')) {
-      saveDrills(getDrills().filter(x => x.id !== el.dataset.id));
-      render();
-    }
   }
   else if (a === 'open-body-edit') {
     const bi = Number(el.dataset.body);
