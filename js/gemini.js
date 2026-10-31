@@ -89,6 +89,13 @@ async function evaluateEssaySet(set) {
   };
 }
 
+/* 本文中の動詞・コロケーション・イディオムを抽出する */
+async function extractVocab(set) {
+  const data = await apiCall({ mode: 'extractVocab', topic: set.topic, bodies: set.bodies });
+  if (!data || !data.vocab) throw new Error('語彙の抽出に失敗しました');
+  return data.vocab;
+}
+
 /* ドリル Stage 1 の増減リストを Gemini に作ってもらう */
 async function generateDrillChanges(topic) {
   const data = await apiCall({ mode: 'drillChanges', topic });

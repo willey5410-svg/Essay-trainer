@@ -482,6 +482,39 @@ function normalizeEval(raw) {
   return ev;
 }
 
+/* 本文から「動詞・コロケーション・イディオム」を抽出するプロンプト */
+function buildVocabPrompt(topic, paragraphs) {
+  return `You are an English vocabulary coach for the EIKEN Grade 1 essay.
+From the body paragraphs below, extract expressions that ACTUALLY APPEAR in the text, grouped into three lists:
+- "verbs": meaningful content verbs worth memorizing, given in base (dictionary) form. Skip be / have / do, modals, and trivial verbs.
+- "collocations": natural word combinations present in the text (verb+noun, adjective+noun, verb+preposition, etc.), given as the learner would memorize them.
+- "idioms": idioms or fixed multi-word expressions present in the text. If there are none, return an empty list.
+Rules: include only items that appear in the text; no duplicates; at most 15 items per list; order by usefulness.
+For each item give "en" (the expression; verbs in base form) and "ja" (a short Japanese meaning).
+
+TOPIC: ${topic}
+BODY PARAGRAPHS:
+1. ${paragraphs[0]}
+2. ${paragraphs[1]}
+3. ${paragraphs[2]}
+
+Return ONLY this JSON:
+{"verbs":[{"en":"...","ja":"..."}],"collocations":[{"en":"...","ja":"..."}],"idioms":[{"en":"...","ja":"..."}]}`;
+}
+
+/* 抽出結果を検証・整形する。3グループとも空なら null。 */
+function normalizeVocab(raw) {
+  if (!raw) return null;
+  const clean = (arr) => (Array.isArray(arr) ? arr : [])
+    .map(it => ({ en: String((it && it.en) || '').trim().slice(0, 80), ja: String((it && it.ja) || '').trim().slice(0, 80) }))
+    .filter(it => it.en)
+    .filter((it, i, a) => a.findIndex(x => x.en.toLowerCase() === it.en.toLowerCase()) === i) // 重複除去
+    .slice(0, 15);
+  const v = { verbs: clean(raw.verbs), collocations: clean(raw.collocations), idioms: clean(raw.idioms) };
+  if (!v.verbs.length && !v.collocations.length && !v.idioms.length) return null;
+  return v;
+}
+
 /* Gemini 429 応答から推奨リトライ秒数を取り出す（details の RetryInfo かメッセージ文字列から） */
 function parseRetrySeconds(body, detail) {
   try {
@@ -818,6 +851,20 @@ module.exports = async (req, res) => {
         evaluation: result.evaluation, arguments: result.arguments,
         axes: result.axes, translations: result.translations,
       });
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+  }
+
+  if (mode === 'extractVocab') {
+    const paragraphs = assembleEssay(req.body.bodies);
+    if (!paragraphs) return res.status(400).json({ error: 'bodies が不正です' });
+    const topicText = (typeof topic === 'string' ? topic : '').trim().slice(0, 300);
+    try {
+      const parsed = await callGemini(buildVocabPrompt(topicText, paragraphs), apiKey, model, 0.2);
+      const vocab = normalizeVocab(parsed);
+      if (!vocab) return res.status(502).json({ error: '語彙の抽出に失敗しました' });
+      return res.status(200).json({ vocab });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

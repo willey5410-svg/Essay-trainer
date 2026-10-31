@@ -313,6 +313,14 @@ section { margin-bottom: 8px; }
 .arg-text { font-size: 0.95rem; margin-top: 3px; }
 .arg-axes { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
 .badge.axis { background: var(--bg); color: var(--sub); border: 1px solid var(--border); font-size: 0.72rem; }
+/* 語彙リスト */
+.vocab-card .vocab-group { margin-top: 12px; }
+.vocab-card .vocab-group h4 { margin: 0 0 6px; font-size: 0.82rem; color: var(--accent); }
+.vocab-list { list-style: none; margin: 0; padding: 0; }
+.vocab-list li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.vocab-list li:last-child { border-bottom: none; }
+.vocab-en { font-weight: 600; font-size: 0.92rem; }
+.vocab-ja { color: var(--sub); font-size: 0.82rem; }
 
 /* evaluation card */
 .eval-card { border-left: 4px solid var(--accent); }

@@ -68,6 +68,7 @@ let state = {
   notice: null,
   busyThemes: false,
   evaluatingSetId: null, // 採点をバックグラウンドで実行中のセットID
+  vocabBusy: null,       // 語彙抽出中のセットID
   readingSetId: null,    // 全文読み上げ中のセットID（Web Speech API）
   readingPass: 0,        // 読み上げの現在の周回数
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
@@ -455,10 +456,33 @@ function viewStudy() {
     <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能です。<strong>「✏️ 本文を編集」</strong>から<strong>全文を自由に修正</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
     ${evalSection(set)}
     ${bodiesHtml}
+    ${vocabCard(set)}
     <div class="card memo-card">
       <div class="body-head"><h3>📝 メモ</h3><span class="stat">自動保存</span></div>
       <textarea id="essayMemo" class="memo-input" data-id="${esc(set.id)}" rows="4" placeholder="このエッセイについてのメモ（覚えた表現、改善点、次回の狙いなど）。入力すると自動で保存されます。">${esc(set.memo || '')}</textarea>
     </div>`;
+}
+
+/* 本文から抽出した語彙（動詞・コロケーション・イディオム）の一覧カード */
+function vocabCard(set) {
+  const busy = state.vocabBusy === set.id;
+  const v = set.vocab;
+  const group = (title, items) => (items && items.length)
+    ? `<div class="vocab-group"><h4>${title}（${items.length}）</h4><ul class="vocab-list">${items.map(it =>
+        `<li><span class="vocab-en">${esc(it.en)}</span>${it.ja ? `<span class="vocab-ja">${esc(it.ja)}</span>` : ''}</li>`).join('')}</ul></div>`
+    : '';
+  let body;
+  if (busy) {
+    body = '<p class="hint-text">Gemini が抽出中…</p>';
+  } else if (v) {
+    const groups = `${group('動詞', v.verbs)}${group('コロケーション', v.collocations)}${group('イディオム', v.idioms)}`;
+    body = `${groups || '<p class="hint-text">抽出できる語彙が見つかりませんでした。</p>'}
+      <button class="btn small ghost" data-action="extract-vocab" data-id="${esc(set.id)}">🔄 再抽出</button>`;
+  } else {
+    body = `<p class="hint-text">本文中の<strong>動詞・コロケーション・イディオム</strong>を抽出し、和訳つきで一覧にします。</p>
+      <button class="btn small ghost" data-action="extract-vocab" data-id="${esc(set.id)}">📒 語彙を抽出する</button>`;
+  }
+  return `<div class="card vocab-card"><div class="body-head"><h3>📒 覚える語彙</h3></div>${body}</div>`;
 }
 
 /* 各 Body の観点（argument）を役割・2軸分類（主体×領域）とともに一覧表示する */
@@ -728,6 +752,28 @@ function applyBodyEdit() {
 /* 合言葉があれば採点をバックグラウンドで走らせる（無ければ「採点する」ボタンから手動実行） */
 function autoRescore(setId) {
   if (localStorage.getItem(LS.keyword)) runBackgroundEvaluation(setId);
+}
+
+/* 本文中の動詞・コロケーション・イディオムを Gemini で抽出し、セットに保存する */
+async function doExtractVocab(setId) {
+  if (state.vocabBusy) return;
+  const set = findSet(setId);
+  if (!set) return;
+  if (requireKeyword('語彙の抽出には合言葉の入力が必要です')) return;
+  state.vocabBusy = setId;
+  state.error = null;
+  render();
+  try {
+    const vocab = await extractVocab(set);
+    const sets = getSets();
+    const s2 = sets.find(s => s.id === setId);
+    if (s2) { s2.vocab = vocab; saveSetsList(sets); }
+  } catch (e) {
+    if (e.code === 'UNAUTHORIZED') authErrorState();
+    else state.error = '語彙の抽出に失敗しました：' + e.message;
+  }
+  state.vocabBusy = null;
+  render();
 }
 
 /* 合言葉が未入力なら合言葉モーダルを開いて true を返す（呼び出し側は return する）。 */
@@ -1535,6 +1581,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'copy-essay') { doCopyEssay(el.dataset.id); }
   else if (a === 'read-essay') { doReadEssay(el.dataset.id); }
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
+  else if (a === 'extract-vocab') { doExtractVocab(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
   else if (a === 'open-chat') {
     state.chatSetId = el.dataset.id;
