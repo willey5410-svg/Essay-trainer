@@ -793,13 +793,13 @@ function authErrorState(message) {
   state.keywordError = message || '合言葉が正しくありません。もう一度入力してください。';
 }
 
-/* Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする。
+/* 問題文（お題）＋ Body 1〜3 の全文（段落を空行で区切る）をクリップボードにコピーする。
    和訳（body.ja）があれば、各段落の直後に「【和訳】…」として一緒にコピーする。 */
 async function doCopyEssay(setId) {
   const set = findSet(setId);
   if (!set) return;
   let hasJa = false;
-  const text = set.bodies.map(b => {
+  const bodiesText = set.bodies.map(b => {
     const en = bodyText(b);
     if (!en) return '';
     const ja = String((b && b.ja) || '').trim();
@@ -807,6 +807,10 @@ async function doCopyEssay(setId) {
     hasJa = true;
     return `${en}\n【和訳】${ja}`;
   }).filter(Boolean).join('\n\n');
+  // 問題文（お題）＋立場を先頭に付ける
+  const stanceLabel = set.stance === 'agree' ? 'Agree（賛成）' : 'Disagree（反対）';
+  const header = `【問題文】${set.topic}${set.topicJa ? `\n（${set.topicJa}）` : ''}\n【立場】${stanceLabel}`;
+  const text = `${header}\n\n${bodiesText}`;
   let ok = false;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -829,7 +833,7 @@ async function doCopyEssay(setId) {
     } catch (e) { ok = false; }
   }
   state.error = ok ? null : 'コピーできませんでした。本文を長押し（右クリック）で選択してください。';
-  state.notice = ok ? (hasJa ? 'Body 1〜3 の全文と和訳をコピーしました' : 'Body 1〜3 の全文をコピーしました') : null;
+  state.notice = ok ? (hasJa ? '問題文と Body 1〜3 の全文・和訳をコピーしました' : '問題文と Body 1〜3 の全文をコピーしました') : null;
   render();
 }
 
