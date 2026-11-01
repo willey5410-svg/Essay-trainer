@@ -11,10 +11,12 @@ const crypto = require('crypto');
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 /* 論点（argument）の3原則。各 Body の核となる論点の質を担保する。 */
-const ARGUMENT_PRINCIPLES = `A strong argument follows three principles:
-1. NEUTRAL: it describes WHAT changes, with no value judgment baked in (prefer "the labor force is reshaped" over "workers are harmed")
-2. STRUCTURAL: it names a structural/systemic change (educational structure, labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits"
-3. ABSTRACT: it is one level more abstract than a narrow concrete anecdote (e.g. "AI does my homework" → "the learning process is altered")`;
+const ARGUMENT_PRINCIPLES = `The "argument" must be a NOUN PHRASE that can be dropped straight into the INTRODUCTION as one of the three previewed points (as in "this essay will discuss X, Y, and Z"). It follows these principles:
+1. NOUN PHRASE: a self-contained noun phrase of about 5–9 words, led by an article/determiner where natural (e.g. "the reshaping of the labor force"). NOT a full sentence, NOT a that-clause, and it must not start with a verb.
+2. NEUTRAL: it describes WHAT changes, with no value judgment baked in (prefer "the reshaping of the labor force" over "the harm done to workers").
+3. STRUCTURAL: it names a structural/systemic change (labor-force structure, information flow, decision-making, social institutions, evaluation systems, market structure, technological development, resource allocation) rather than "who benefits".
+4. ABSTRACT: it is one level more abstract than a narrow concrete anecdote (e.g. "AI does my homework" → "the alteration of the learning process").
+5. PARALLEL: phrase the three arguments in parallel grammatical form so they read naturally when listed together in the introduction.`;
 
 /* 3つの Body に与える「4文アーキテクチャ」。1文=1機能で役割を固定しつつ、
    模範解答12本から抽出した「展開の武器」「実証の格付け」で②③を強くする。 */
@@ -83,7 +85,7 @@ STANCE: ${stanceText}
 
 Write the THREE body paragraphs of a model answer. Each body presents a DIFFERENT argument that supports the stance, and the three arguments must be clearly distinct (e.g. an individual angle, a social/economic angle, and an international/future angle).
 
-For EACH body, first decide its core "argument": a substantial noun phrase of 5–8 words naming WHAT structurally changes.
+For EACH body, first decide its core "argument": an introduction-ready noun phrase (about 5–9 words) naming WHAT structurally changes, suitable for previewing this body as one of the three points in the introduction.
 ${ARGUMENT_PRINCIPLES}
 
 Then write the paragraph itself as four sentences following this fixed architecture:
@@ -370,7 +372,7 @@ TOPIC: ${topic}
 STANCE: ${stanceText}
 
 Rewrite body ${bodyIndex + 1} so that its CORE ARGUMENT is the learner's own point (may be Japanese or rough English): "${point}".
-ADOPT this point as the argument — rephrase it into a neutral, structural, one-level-abstract noun phrase of 5–8 words (keep its meaning; don't copy verbatim).
+ADOPT this point as the argument — rephrase it into an introduction-ready noun phrase (about 5–9 words): neutral, structural, one-level-abstract, article-led, and usable as one of the three points previewed in the introduction (keep its meaning; don't copy verbatim).
 
 ${roleSpec}
 
@@ -450,7 +452,7 @@ Score each criterion from 0 to 10 (0.5 steps allowed):
 
 For each criterion also write one short comment IN JAPANESE: what is good and what specifically should be improved.
 
-Also, for EACH of the three body paragraphs, distill its CURRENT core "argument" — a 5–8 word ENGLISH noun phrase naming WHAT structurally changes, that accurately reflects the paragraph AS WRITTEN above. ${ARGUMENT_PRINCIPLES}
+Also, for EACH of the three body paragraphs, distill its CURRENT core "argument" — an introduction-ready ENGLISH noun phrase (about 5–9 words) that previews this body as one of the three points in the introduction and reflects the paragraph AS WRITTEN above; the three should be parallel in form. ${ARGUMENT_PRINCIPLES}
 Return them in order as "arguments":["body1","body2","body3"]. English only — never Japanese.
 
 Finally, classify EACH of the three bodies on two axes, choosing EXACTLY ONE label per axis that best fits the paragraph (no overlap: pick the single most central one):

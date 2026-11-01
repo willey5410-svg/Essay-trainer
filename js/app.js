@@ -498,9 +498,16 @@ function argSummaryCard(set) {
     return `<li><span class="arg-role">${role.name}</span> <span class="badge src">${esc(role.type)}</span>
       <div class="arg-text">${esc(b.argument || '（観点未設定）')}</div>${axisTags}</li>`;
   }).join('');
+  // Introduction で3点を並べる用の名詞句の列挙（3つそろっているときだけ）
+  const args = set.bodies.map(b => (b.argument || '').trim()).filter(Boolean);
+  const introLine = args.length === 3
+    ? `<p class="arg-intro"><span class="arg-intro-label">Introduction 用</span>${esc(args[0])}, ${esc(args[1])}, and ${esc(args[2])}</p>`
+    : '';
   return `<div class="card arg-summary">
     <h3>🧭 この構成の3観点</h3>
+    <p class="hint-text">各観点は Introduction でそのまま3点として並べられる名詞句です。</p>
     <ol class="arg-list">${items}</ol>
+    ${introLine}
   </div>`;
 }
 

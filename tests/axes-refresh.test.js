@@ -34,4 +34,5 @@ H.run('axes-refresh', async ({ page, base, check }) => {
   check('axis tag 個人×経済', summary.includes('個人×経済'));
   check('axis tag 国家×技術', summary.includes('国家×技術'));
   check('axis tag 世界×権利', summary.includes('世界×権利'));
+  check('introduction enumeration line shown', summary.includes('Introduction 用') && summary.includes('refreshed one, refreshed two, and refreshed three'));
 });

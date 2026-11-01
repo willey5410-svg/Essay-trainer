@@ -313,6 +313,8 @@ section { margin-bottom: 8px; }
 .arg-text { font-size: 0.95rem; margin-top: 3px; }
 .arg-axes { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
 .badge.axis { background: var(--bg); color: var(--sub); border: 1px solid var(--border); font-size: 0.72rem; }
+.arg-intro { margin: 12px 0 0; padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; font-size: 0.92rem; line-height: 1.6; }
+.arg-intro-label { display: inline-block; font-size: 0.7rem; color: var(--accent); font-weight: 700; margin-right: 8px; }
 /* 語彙リスト */
 .vocab-card .vocab-group { margin-top: 12px; }
 .vocab-card .vocab-group h4 { margin: 0 0 6px; font-size: 0.82rem; color: var(--accent); }
