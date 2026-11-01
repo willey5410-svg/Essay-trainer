@@ -292,16 +292,6 @@ section { margin-bottom: 8px; }
 .field-error { color: var(--red); font-size: 0.83rem; margin-top: 6px; }
 .modal .wide { margin-top: 12px; }
 
-/* chat modal */
-.chat-modal { max-width: 460px; }
-.chat-history {
-  max-height: 280px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 8px;
-  margin-bottom: 10px; padding-right: 2px;
-}
-.chat-msg { padding: 8px 12px; border-radius: 12px; font-size: 0.88rem; max-width: 85%; white-space: pre-wrap; }
-.chat-msg.user { align-self: flex-end; background: var(--accent-soft); color: var(--accent); }
-.chat-msg.model { align-self: flex-start; background: var(--bg); color: var(--text); }
 
 /* 観点まとめカード */
 .arg-summary { border-left: 4px solid var(--accent); }

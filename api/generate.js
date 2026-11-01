@@ -613,53 +613,6 @@ async function callGemini(prompt, apiKey, model, temperature) {
   }
 }
 
-/* エッセイの採点についてGeminiと会話するためのシステム文脈 */
-function buildChatSystemContext(topic, stance, bodies, evaluation) {
-  const paragraphs = assembleEssay(bodies) || [];
-  let s = `You are a friendly, encouraging EIKEN Grade 1 English essay writing coach, chatting with a learner about a specific practice essay they are working on.
-
-TOPIC: ${topic}
-STANCE: ${stance === 'agree' ? 'AGREE / YES' : 'DISAGREE / NO'}
-
-CURRENT BODY PARAGRAPHS (Body 1 = causal necessity, Body 2 = empirical evidence, Body 3 = concession-rebuttal):
-${paragraphs.map((p, i) => `${i + 1}. ${p}`).join('\n')}`;
-
-  if (evaluation && typeof evaluation.average === 'number') {
-    s += `\n\nEXAMINER SCORES (out of 10): structure ${evaluation.structure}, content ${evaluation.content}, language ${evaluation.language} (average ${evaluation.average}).
-Examiner comments — structure: ${evaluation.comments?.structure || ''} / content: ${evaluation.comments?.content || ''} / language: ${evaluation.comments?.language || ''}`;
-  }
-  s += `\n\nAnswer the learner's questions IN JAPANESE, concisely (a few sentences unless real detail is needed), in a supportive tone. You may reference specific body paragraphs, scores, or arguments above. Do not regenerate the essay or invent a new template — just discuss and advise.`;
-  return s;
-}
-
-async function callGeminiChat(systemText, turns, apiKey, model) {
-  let r;
-  try {
-    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemText }] },
-        contents: turns.map(t => ({ role: t.role, parts: [{ text: t.text }] })),
-        generationConfig: { temperature: 0.6 },
-      }),
-    });
-  } catch (e) {
-    const err = new Error('Gemini API への接続に失敗しました');
-    err.status = 502;
-    throw err;
-  }
-  if (!r.ok) await throwGeminiHttpError(r);
-  const data = await r.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    const err = new Error('Gemini から有効な応答が得られませんでした');
-    err.status = 502;
-    throw err;
-  }
-  return text.trim();
-}
-
 function keywordMatches(given, expected) {
   const a = Buffer.from(String(given));
   const b = Buffer.from(String(expected));
@@ -810,32 +763,6 @@ module.exports = async (req, res) => {
       const review = normalizeDrillReview(raw);
       if (!review) return res.status(502).json({ error: '講評の形式が不正です' });
       return res.status(200).json({ review });
-    } catch (e) {
-      return res.status(e.status || 502).json({ error: e.message });
-    }
-  }
-
-  if (mode === 'chat') {
-    if (typeof topic !== 'string' || !topic.trim() || !['agree', 'disagree'].includes(stance)) {
-      return res.status(400).json({ error: 'topic / stance が不正です' });
-    }
-    if (!assembleEssay(req.body.bodies)) {
-      return res.status(400).json({ error: 'bodies が不正です' });
-    }
-    const message = String(req.body.message || '').trim().slice(0, 500);
-    if (!message) return res.status(400).json({ error: 'メッセージが入力されていません' });
-    const history = Array.isArray(req.body.history)
-      ? req.body.history.slice(-24).map(t => ({
-          role: t && t.role === 'model' ? 'model' : 'user',
-          text: String((t && t.text) || '').trim().slice(0, 1000),
-        })).filter(t => t.text)
-      : [];
-    const turns = history.concat([{ role: 'user', text: message }]);
-    try {
-      const systemText = buildChatSystemContext(
-        topic.trim().slice(0, 300), stance, req.body.bodies, req.body.evaluation || null);
-      const reply = await callGeminiChat(systemText, turns, apiKey, model);
-      return res.status(200).json({ reply });
     } catch (e) {
       return res.status(e.status || 502).json({ error: e.message });
     }

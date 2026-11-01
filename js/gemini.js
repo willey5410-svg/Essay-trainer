@@ -148,21 +148,6 @@ async function switchBody2Mode(set, targetMode) {
   return body;
 }
 
-/* 採点についてGeminiと会話する（履歴は呼び出し側が保持） */
-async function chatWithGemini(set, history, message) {
-  const data = await apiCall({
-    mode: 'chat',
-    topic: set.topic,
-    stance: set.stance,
-    bodies: set.bodies,
-    evaluation: set.evaluation || null,
-    history,
-    message,
-  });
-  if (!data || !data.reply) throw new Error('応答の形式が不正です');
-  return data.reply;
-}
-
 async function generateThemes(existingTopics) {
   const data = await apiCall({ mode: 'themes', existingTopics });
   if (!data || !Array.isArray(data.themes)) throw new Error('生成結果の形式が不正です');

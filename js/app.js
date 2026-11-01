@@ -74,10 +74,6 @@ let state = {
   bodyEdit: null,        // {setId, bodyIdx, vals, error} 色付き部分だけの手直し
   bodyRewrite: null,     // {setId, bodyIdx, text, busy, error} 指定観点での書き直し
   switchingBody2: false, // Body 2 の型切り替え中フラグ
-  chatSetId: null,
-  chatDraft: '',
-  chatBusy: false,
-  chatError: null,
 };
 
 const $app = document.getElementById('app');
@@ -298,7 +294,6 @@ function render() {
   if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
   if (state.modal === 'pasteEssay') html += modalPasteEssay();
   if (state.modal === 'drillCell') html += modalDrillCell();
-  if (state.modal === 'chat') html += modalChat();
   $app.innerHTML = html;
 }
 
@@ -448,7 +443,6 @@ function viewStudy() {
         ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${readRepeat()}）` : `🔊 全文読み上げ（${readRepeat()}回）`}</button>` : ''}
         ${set.source === 'gemini' && !set.pinned ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
         ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
-        <button class="btn small ghost" data-action="open-chat" data-id="${esc(set.id)}">💬 Geminiに質問する</button>
       </div>
       ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
     </div>
@@ -1026,72 +1020,6 @@ async function doSwitchBody2(targetMode) {
   render();
 }
 
-/* ---------- 採点・論点判定についてGeminiと会話する ---------- */
-
-function modalChat() {
-  const set = findSet(state.chatSetId);
-  if (!set) return '';
-  const history = set.chat || [];
-  const messages = history.length
-    ? history.map(m => `<div class="chat-msg ${m.role}">${esc(m.text)}</div>`).join('')
-    : '<p class="hint-text">この構成やスコア、論点について、何でも聞いてください。</p>';
-  return `<div class="overlay" data-action="close-modal">
-    <div class="modal chat-modal" data-stop>
-      <h3>💬 Geminiに質問する</h3>
-      <div class="chat-history" id="chatHistory">${messages}</div>
-      ${state.chatBusy ? '<p class="hint-text">Gemini が考え中…</p>' : ''}
-      ${state.chatError ? `<p class="field-error">${esc(state.chatError)}</p>` : ''}
-      <input type="text" id="chatInput" value="${esc(state.chatDraft)}" placeholder="例：なぜ内容のスコアが低いのですか？" ${state.chatBusy ? 'disabled' : ''}>
-      <div class="row">
-        <button class="btn small" data-action="chat-send" ${state.chatBusy ? 'disabled' : ''}>送信</button>
-        ${history.length ? `<button class="btn small ghost" data-action="chat-reset" data-id="${esc(set.id)}">🗑 会話をリセット</button>` : ''}
-        <button class="btn small ghost" data-action="close-modal">閉じる</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-function scrollChatToBottom() {
-  const el = document.getElementById('chatHistory');
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-async function doChatSend() {
-  const input = document.getElementById('chatInput');
-  const message = (input ? input.value : state.chatDraft).trim();
-  if (!message) return;
-  if (requireKeyword('チャットには合言葉の入力が必要です')) return;
-  const setId = state.chatSetId;
-  const sets = getSets();
-  const set = sets.find(s => s.id === setId);
-  if (!set) return;
-  set.chat = set.chat || [];
-  const historyForApi = set.chat.map(m => ({ role: m.role, text: m.text }));
-  set.chat.push({ role: 'user', text: message });
-  saveSetsList(sets);
-  state.chatDraft = '';
-  state.chatBusy = true;
-  state.chatError = null;
-  render();
-  scrollChatToBottom();
-  try {
-    const reply = await chatWithGemini(set, historyForApi, message);
-    const sets2 = getSets();
-    const s2 = sets2.find(s => s.id === setId);
-    if (s2) {
-      s2.chat = s2.chat || [];
-      s2.chat.push({ role: 'model', text: reply });
-      saveSetsList(sets2);
-    }
-  } catch (e) {
-    if (e.code === 'UNAUTHORIZED') { authErrorState(); state.chatBusy = false; render(); return; }
-    state.chatError = '送信に失敗しました：' + e.message;
-  }
-  state.chatBusy = false;
-  render();
-  scrollChatToBottom();
-}
-
 function modalThemeAdd() {
   return `<div class="overlay" data-action="close-modal">
     <div class="modal" data-stop>
@@ -1442,7 +1370,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'test-read-stop') { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} }
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
-    state.bodyEdit = null; state.chatError = null; state.cellDraft = null;
+    state.bodyEdit = null; state.cellDraft = null;
     state.bodyRewrite = null; state.pasteError = null;
     render();
   }
@@ -1590,22 +1518,6 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'eval-now') { runBackgroundEvaluation(el.dataset.id); }
   else if (a === 'extract-vocab') { doExtractVocab(el.dataset.id); }
   else if (a === 'regenerate-essay') { regenerateEssay(el.dataset.id); }
-  else if (a === 'open-chat') {
-    state.chatSetId = el.dataset.id;
-    state.chatDraft = '';
-    state.chatError = null;
-    state.modal = 'chat';
-    render();
-  }
-  else if (a === 'chat-send') { doChatSend(); }
-  else if (a === 'chat-reset') {
-    if (confirm('この会話履歴を削除しますか？')) {
-      const sets = getSets();
-      const set = sets.find(s => s.id === el.dataset.id);
-      if (set) { set.chat = []; saveSetsList(sets); }
-      render();
-    }
-  }
 });
 
 // タブを閉じる・切り替える際に未送信の変更を送っておく
@@ -1620,9 +1532,6 @@ $app.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.id === 'inpKeyword') {
     doSaveKeyword(state.modal === 'settings' ? 'settings' : 'welcome');
   }
-  if (ev.key === 'Enter' && ev.target.id === 'chatInput') {
-    doChatSend();
-  }
   if (ev.key === 'Enter' && ev.target.id === 'dcNote') {
     const btn = $app.querySelector('[data-action="drill-cell-save"]');
     if (btn) btn.click();
@@ -1634,7 +1543,6 @@ $app.addEventListener('keydown', (ev) => {
 
 // 再レンダリングで入力値が失われないよう、編集モーダルの入力を state に同期する
 $app.addEventListener('input', (ev) => {
-  if (ev.target.id === 'chatInput') state.chatDraft = ev.target.value;
   if (ev.target.classList.contains('sent-input') && state.bodyEdit) {
     state.bodyEdit.vals[ev.target.id] = ev.target.value;
   }
