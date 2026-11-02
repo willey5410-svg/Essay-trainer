@@ -148,6 +148,32 @@ et.readRate / et.readPitch / et.readVoice / et.readRepeat   音読設定
 - **日本語混入ガード**：`sentences` は英語のみ。かな/カナ/漢字を含む場合、生成を不正として弾く（サーバー `normalizeBody` ＋ クライアント `parseBody` の二重防御）。
 - `evaluate` は「採点」1回の応答に、本文に合わせた **arguments（観点）・axes（主体×領域）・translations（和訳）** を相乗りで返す（追加API呼び出しなし）。本文編集→再採点でこれらが最新化される。
 
+### 採点軸の詳細（`evaluate` / `buildEvalPrompt`）
+
+採点者＝「英検1級の厳格だが公正な examiner」。**本論3段落のみ**を評価し、以下を前提とする：
+- **導入・結論は意図的に省略**しているので、その不在は減点しない。
+- 各Bodyが「Body1=因果必然 / Body2=実証 / Body3=譲歩反駁」の**4文固定構成**であること自体は減点対象にせず、その中の**推論の深さ・説得力**を評価する。
+
+**3軸を各 0〜10 点（0.5刻み）で採点し、平均（average）＝3項目平均を小数1桁で算出。** 各軸に**日本語の短い講評**（良い点＋具体的改善点）を付ける（`comments.{structure,content,language}`）。
+
+| 軸（JSONキー） | 日本語 | 採点観点（プロンプト原文の要旨） |
+|---|---|---|
+| `structure` | 構成 | 各段落の4文の流れ（主張 → 展開 → 証拠/深刻化 → 着地）が論理的に成立しているか。各Bodyが役割に合った修辞モードを使い、エッセイ全体で**論法を変化**させているか（因果メカニズム／実証／譲歩反駁を使い分け、同一パターンや同一の結論マーカーの反復になっていないか）。**Body 3 が反論を実際に無効化（neutralize）**できているか。 |
+| `content` | 内容 | 3つの論点が適切・明確に別個で、**実質的な深み**をもって展開されているか。具体的メカニズム（"As X grows, Y also grows"）、強い証拠表現（studies / experience / "in fact" / "already"）、大きな価値への**エスカレーション**（"which would ultimately harm …"）を、曖昧な主張より高く評価。各論点が**なぜ立場を支持するか**が明確か。 |
+| `language` | 英語表現 | 文法の正確さ、自然な言い回し、英検1級（CEFR C1）に見合う**語彙の幅**。 |
+
+採点応答の完全な形（1回で返る）：
+```
+{
+  "structure": 0.0, "content": 0.0, "language": 0.0,          // 各0〜10（平均は average として別途付与）
+  "comments": { "structure": "...", "content": "...", "language": "..." },  // 日本語講評
+  "arguments": ["body1", "body2", "body3"],                   // Intro名詞句（§7）
+  "axes": [ {"layer":"...","domain":"..."}, {...}, {...} ],   // 主体×領域（§7）
+  "translations": ["body1", "body2", "body3"]                 // 各Bodyの和訳
+}
+```
+※ `average` と `comments` の整形はサーバー `normalizeEval`、`arguments/axes/translations` の検証も同関数群で行い、不正値は無視して既存値を保持する。
+
 ### /api/data（クラウド同期）
 - `POST /api/data` に `{ keyword, op, data }`。`op: 'load' | 'save'`。Blob 未設定時は `501`。
 
