@@ -314,6 +314,14 @@ section { margin-bottom: 8px; }
   margin-bottom: -1px;
 }
 .vtab.active { background: var(--card); color: var(--accent); font-weight: 700; border-bottom: 1px solid var(--card); }
+/* 比較タブ：初回 vs 模範を1文ずつ左右に並べる */
+.cmp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; align-items: stretch; }
+.cmp-cell { padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; line-height: 1.5; background: var(--bg); border: 1px solid var(--border); }
+.cmp-first { border-left: 3px solid var(--sub); }
+.cmp-model { border-left: 3px solid var(--accent); }
+.cmp-label { display: block; font-size: 0.68rem; color: var(--sub); font-weight: 700; margin-bottom: 3px; letter-spacing: .02em; }
+.cmp-empty { color: var(--sub); }
+@media (max-width: 560px) { .cmp-row { grid-template-columns: 1fr; gap: 4px; margin: 10px 0; } }
 /* 語彙リスト */
 .vocab-card .vocab-group { margin-top: 12px; }
 .vocab-card .vocab-group h4 { margin: 0 0 6px; font-size: 0.82rem; color: var(--accent); }

@@ -23,7 +23,7 @@ H.run('first-draft', async ({ page, base, check }) => {
   check('first bodies hold the draft', set.firstBodies[0].sentences[0] === 'First, MY draft one here.');
 
   // タブが出て、既定は模範解答
-  check('two version tabs shown', await page.locator('.version-tabs .vtab').count() === 2);
+  check('three version tabs shown', await page.locator('.version-tabs .vtab').count() === 3);
   check('default tab shows MODEL text', (await page.locator('#app').innerText()).includes('MODEL body one here.'));
   check('default tab does NOT show draft text', !(await page.locator('#app').innerText()).includes('MY draft one here.'));
 
@@ -33,6 +33,14 @@ H.run('first-draft', async ({ page, base, check }) => {
   check('first tab shows the draft', firstTxt.includes('MY draft one here.'));
   check('first tab is read-only (no edit button)', await page.locator('button[data-action="open-body-edit"]').count() === 0);
   check('first tab has replace/delete controls', await page.locator('[data-action="delete-first-draft"]').count() === 1);
+
+  // 比較タブ：初回と模範を1文ずつ左右に並べる
+  check('compare tab shown', await page.locator('[data-action="study-tab"][data-tab="compare"]').count() === 1);
+  await page.locator('[data-action="study-tab"][data-tab="compare"]').click(); await page.waitForTimeout(150);
+  check('compare rows rendered', await page.locator('.cmp-row').count() >= 3);
+  check('compare row has first cell', await page.locator('.cmp-row .cmp-first').first().innerText().then(t => t.includes('MY draft one here.')));
+  check('compare row has model cell', await page.locator('.cmp-row .cmp-model').first().innerText().then(t => t.includes('MODEL body one here.')));
+  check('compare tab read-only (no edit button)', await page.locator('button[data-action="open-body-edit"]').count() === 0);
 
   // 模範解答タブへ戻ると編集可
   await page.locator('[data-action="study-tab"][data-tab="model"]').click(); await page.waitForTimeout(150);
@@ -59,6 +67,6 @@ H.run('first-draft', async ({ page, base, check }) => {
   await page.locator('#firstDraftText').fill(first);
   await page.locator('[data-action="first-draft-save"]').click(); await page.waitForTimeout(300);
   check('first draft registered on existing set', await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('et.sets')).find(x => x.id === 'gen-nofirst'); return Array.isArray(s.firstBodies) && s.firstBodies.length === 3; }));
-  check('tabs appear after registering', await page.locator('.version-tabs .vtab').count() === 2);
+  check('tabs appear after registering', await page.locator('.version-tabs .vtab').count() === 3);
   check('switched to first tab after save', (await page.locator('#app').innerText()).includes('MY draft one here.'));
 });

@@ -434,10 +434,11 @@ function viewStudy() {
   }).join('');
 
   const hasFirst = Array.isArray(set.firstBodies) && set.firstBodies.length > 0;
-  const tab = hasFirst ? (state.studyTab === 'first' ? 'first' : 'model') : 'model';
+  const tab = hasFirst ? (['first', 'compare'].includes(state.studyTab) ? state.studyTab : 'model') : 'model';
   const tabsHtml = hasFirst ? `<div class="version-tabs">
       <button class="vtab${tab === 'first' ? ' active' : ''}" data-action="study-tab" data-tab="first">✍️ 初回</button>
       <button class="vtab${tab === 'model' ? ' active' : ''}" data-action="study-tab" data-tab="model">📘 模範解答</button>
+      <button class="vtab${tab === 'compare' ? ' active' : ''}" data-action="study-tab" data-tab="compare">🆚 比較</button>
     </div>` : '';
 
   const modelContent = `
@@ -469,7 +470,31 @@ function viewStudy() {
       <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
     </div>
     ${tabsHtml}
-    ${tab === 'first' ? firstBodiesView(set) : modelContent}`;
+    ${tab === 'first' ? firstBodiesView(set) : tab === 'compare' ? compareView(set) : modelContent}`;
+}
+
+/* 初回 vs 模範解答：Body ごとに1文ずつ左右に並べて比較する読み取り専用ビュー */
+function compareView(set) {
+  const firstBodies = set.firstBodies || [];
+  const cards = set.bodies.map((model, bi) => {
+    const first = firstBodies[bi] || {};
+    const fs = Array.isArray(first.sentences) ? first.sentences : [];
+    const ms = Array.isArray(model.sentences) ? model.sentences : [];
+    const n = Math.max(fs.length, ms.length);
+    let rows = '';
+    for (let i = 0; i < n; i++) {
+      rows += `<div class="cmp-row">
+        <div class="cmp-cell cmp-first"><span class="cmp-label">✍️ 初回</span>${fs[i] ? renderSentence(fs[i]) : '<span class="cmp-empty">—</span>'}</div>
+        <div class="cmp-cell cmp-model"><span class="cmp-label">📘 模範</span>${ms[i] ? renderSentence(ms[i]) : '<span class="cmp-empty">—</span>'}</div>
+      </div>`;
+    }
+    return `<div class="card body-card">
+      <div class="body-head"><h3>Body ${bi + 1}</h3></div>
+      ${rows}
+    </div>`;
+  }).join('');
+  return `<p class="hint-text">🆚 <strong>初回（あなたの下書き）</strong>と<strong>模範解答／最終形</strong>を、各 Body で1文ずつ左右に並べました。読み取り専用です。文の数が合わない場合は「—」で表示します。</p>
+    ${cards}`;
 }
 
 /* 初回（自分で書いた版）の読み取り専用ビュー */
@@ -1579,7 +1604,7 @@ $app.addEventListener('click', (ev) => {
     state.view = 'study';
     render();
   }
-  else if (a === 'study-tab') { state.studyTab = el.dataset.tab === 'first' ? 'first' : 'model'; render(); }
+  else if (a === 'study-tab') { state.studyTab = ['first', 'compare'].includes(el.dataset.tab) ? el.dataset.tab : 'model'; render(); }
   else if (a === 'open-first-draft') {
     const set = findSet(el.dataset.id || state.setId);
     if (!set) return;
