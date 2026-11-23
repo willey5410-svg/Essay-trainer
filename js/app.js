@@ -59,8 +59,10 @@ let state = {
   pendingStance: null,
   themeAddError: null,
   themeDraft: { en: '', ja: '', cat: null },
-  pasteDraft: { topic: '', topicJa: '', stance: 'agree', text: '' }, // 自作エッセイ貼り付けフォーム
+  pasteDraft: { topic: '', topicJa: '', stance: 'agree', text: '', first: '' }, // 自作エッセイ貼り付けフォーム
   pasteError: null,
+  studyTab: 'model',     // study画面の版タブ 'model'（模範解答）| 'first'（初回）
+  firstDraft: null,      // 初回登録モーダルの状態 {setId, text, error}
   loadingText: '',
   setId: null,
   showJa: {},
@@ -293,6 +295,7 @@ function render() {
   if (state.modal === 'bodyEdit') html += modalBodyEdit();
   if (state.modal === 'bodyRewrite') html += modalBodyRewrite();
   if (state.modal === 'pasteEssay') html += modalPasteEssay();
+  if (state.modal === 'firstDraft') html += modalFirstDraft();
   if (state.modal === 'drillCell') html += modalDrillCell();
   $app.innerHTML = html;
 }
@@ -323,7 +326,7 @@ function viewHome() {
     return `<div class="card set-card">
       <div class="set-info" data-action="open-set" data-id="${esc(s.id)}">
         <div class="set-topic">${esc(s.topic)}</div>
-        <div class="set-sub">${esc(s.topicJa || '')} ${stanceBadge(s.stance)} ${s.source === 'gemini' ? '<span class="badge src">Gemini</span>' : s.source === 'self' ? '<span class="badge src">自作</span>' : '<span class="badge src">サンプル</span>'}</div>
+        <div class="set-sub">${esc(s.topicJa || '')} ${stanceBadge(s.stance)} ${s.source === 'gemini' ? '<span class="badge src">Gemini</span>' : s.source === 'self' ? '<span class="badge src">自作</span>' : '<span class="badge src">サンプル</span>'}${Array.isArray(s.firstBodies) && s.firstBodies.length ? ' <span class="badge src">🆚 初回あり</span>' : ''}</div>
       </div>
       <div class="set-side">
         ${s.pinned ? '<span class="cloud-badge" title="保護中（削除・再生成で消えません）">🔒 保護</span>' : ''}
@@ -430,22 +433,23 @@ function viewStudy() {
     </div>`;
   }).join('');
 
-  return `<header class="topbar">
-      <button class="btn ghost" data-action="go-home">← 一覧へ</button>
-    </header>
-    ${banner()}
-    <div class="topic-head">
-      <h2>${esc(set.topic)}</h2>
-      <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
-      <div class="row">
-        <button class="btn small ${set.pinned ? '' : 'ghost'}" data-action="toggle-pin" data-id="${esc(set.id)}">${set.pinned ? '🔒 保護中（解除）' : '🔓 保護する'}</button>
-        <button class="btn small ghost" data-action="copy-essay" data-id="${esc(set.id)}">📋 全文コピー</button>
-        ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${readRepeat()}）` : `🔊 全文読み上げ（${readRepeat()}回）`}</button>` : ''}
-        ${set.source === 'gemini' && !set.pinned ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
-        ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
-      </div>
-      ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
+  const hasFirst = Array.isArray(set.firstBodies) && set.firstBodies.length > 0;
+  const tab = hasFirst ? (state.studyTab === 'first' ? 'first' : 'model') : 'model';
+  const tabsHtml = hasFirst ? `<div class="version-tabs">
+      <button class="vtab${tab === 'first' ? ' active' : ''}" data-action="study-tab" data-tab="first">✍️ 初回</button>
+      <button class="vtab${tab === 'model' ? ' active' : ''}" data-action="study-tab" data-tab="model">📘 模範解答</button>
+    </div>` : '';
+
+  const modelContent = `
+    <div class="row">
+      <button class="btn small ${set.pinned ? '' : 'ghost'}" data-action="toggle-pin" data-id="${esc(set.id)}">${set.pinned ? '🔒 保護中（解除）' : '🔓 保護する'}</button>
+      <button class="btn small ghost" data-action="copy-essay" data-id="${esc(set.id)}">📋 全文コピー</button>
+      ${('speechSynthesis' in window) ? `<button class="btn small ghost" data-action="read-essay" data-id="${esc(set.id)}">${state.readingSetId === set.id ? `⏹ 読み上げを停止（${state.readingPass}/${readRepeat()}）` : `🔊 全文読み上げ（${readRepeat()}回）`}</button>` : ''}
+      ${set.source === 'gemini' && !set.pinned ? `<button class="btn small ghost" data-action="regenerate-essay" data-id="${esc(set.id)}">🔄 別パターンで再生成</button>` : ''}
+      ${hasFirst ? '' : `<button class="btn small ghost" data-action="open-first-draft" data-id="${esc(set.id)}">✍️ 初回を登録</button>`}
+      ${DRILL_ENABLED && set.drillId && getDrills().some(d => d.id === set.drillId) ? `<button class="btn small ghost" data-action="open-essay-drill" data-id="${esc(set.drillId)}">🧠 元の観点だしドリルを見る</button>` : ''}
     </div>
+    ${set.pinned ? '<p class="hint-text">🔒 このエッセイは保護中です。再生成・削除で消えません（保護を解除すると通常どおり操作できます）。</p>' : ''}
     ${argSummaryCard(set)}
     <p class="hint-text">3つの Body は役割が異なります（<strong>因果必然</strong>／<strong>実証</strong>／<strong>譲歩反駁</strong>）。文頭のラベルは各文の機能です。<strong>「✏️ 本文を編集」</strong>から<strong>全文を自由に修正</strong>でき、保存すると再採点され、和訳も編集後の内容に更新されます。</p>
     ${evalSection(set)}
@@ -455,6 +459,76 @@ function viewStudy() {
       <div class="body-head"><h3>📝 メモ</h3><span class="stat">自動保存</span></div>
       <textarea id="essayMemo" class="memo-input" data-id="${esc(set.id)}" rows="4" placeholder="このエッセイについてのメモ（覚えた表現、改善点、次回の狙いなど）。入力すると自動で保存されます。">${esc(set.memo || '')}</textarea>
     </div>`;
+
+  return `<header class="topbar">
+      <button class="btn ghost" data-action="go-home">← 一覧へ</button>
+    </header>
+    ${banner()}
+    <div class="topic-head">
+      <h2>${esc(set.topic)}</h2>
+      <p class="set-sub">${esc(set.topicJa || '')} ${stanceBadge(set.stance)}</p>
+    </div>
+    ${tabsHtml}
+    ${tab === 'first' ? firstBodiesView(set) : modelContent}`;
+}
+
+/* 初回（自分で書いた版）の読み取り専用ビュー */
+function firstBodiesView(set) {
+  const cards = (set.firstBodies || []).map((body, bi) => {
+    const sentences = Array.isArray(body.sentences) ? body.sentences : [];
+    const lines = sentences.map(s => `<p class="study-line">${renderSentence(s)}</p>`).join('');
+    const wc = sentences.join(' ').split(/\s+/).filter(Boolean).length;
+    return `<div class="card body-card">
+      <div class="body-head"><h3>Body ${bi + 1}</h3><span class="stat">${wc} 語</span></div>
+      ${lines}
+    </div>`;
+  }).join('');
+  return `<p class="hint-text">✍️ これは<strong>あなたが最初に書いた版（初回）</strong>です。読み取り専用で保存されています。タブで「📘 模範解答」と見比べてください。</p>
+    <div class="row">
+      <button class="btn small ghost" data-action="open-first-draft" data-id="${esc(set.id)}">✍️ 初回を差し替え</button>
+      <button class="btn small ghost" data-action="delete-first-draft" data-id="${esc(set.id)}">🗑 初回を削除</button>
+    </div>
+    ${cards}`;
+}
+
+/* 初回登録/差し替えモーダル */
+function modalFirstDraft() {
+  const d = state.firstDraft;
+  if (!d) return '';
+  return `<div class="overlay" data-action="close-modal">
+    <div class="modal" data-stop>
+      <h3>✍️ 初回（自分で書いた版）を登録</h3>
+      <p class="hint-text">あなたが最初に書いた Body 1〜3 を、段落の間を<strong>空行</strong>で区切って貼り付けてください。読み取り専用で保存され、タブで模範解答と比較できます。</p>
+      <textarea id="firstDraftText" class="paste-input" rows="10" spellcheck="false" placeholder="First of all, …（Body 1）&#10;&#10;Secondly, …（Body 2）&#10;&#10;Finally, …（Body 3）">${esc(d.text)}</textarea>
+      ${d.error ? `<p class="field-error">${esc(d.error)}</p>` : ''}
+      <div class="row">
+        <button class="btn" data-action="first-draft-save">保存</button>
+        <button class="btn ghost" data-action="close-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function doSaveFirstDraft() {
+  const d = state.firstDraft;
+  if (!d) return;
+  const el = document.getElementById('firstDraftText');
+  const text = el ? el.value : d.text;
+  state.firstDraft = { setId: d.setId, text, error: null };
+  const res = essayBodiesFromText(text);
+  if (!res.bodies) {
+    state.firstDraft.error = `Body 1〜3 を空行で区切って3段落にしてください（現在 ${res.count} 段落を検出）。`;
+    render();
+    return;
+  }
+  const sets = getSets();
+  const s2 = sets.find(s => s.id === d.setId);
+  if (s2) { s2.firstBodies = res.bodies; saveSetsList(sets); }
+  state.modal = null;
+  state.firstDraft = null;
+  state.studyTab = 'first';
+  state.notice = '初回を登録しました。タブで「模範解答」と切り替えて比較できます。';
+  render();
 }
 
 /* 本文から抽出した語彙（動詞・コロケーション・イディオム）の一覧カード */
@@ -1088,8 +1162,11 @@ function modalPasteEssay() {
         <option value="agree"${d.stance === 'agree' ? ' selected' : ''}>賛成（YES）</option>
         <option value="disagree"${d.stance === 'disagree' ? ' selected' : ''}>反対（NO）</option>
       </select>
-      <label>本文（Body 1〜3 を空行で区切る）</label>
-      <textarea id="pasteText" class="paste-input" rows="10" spellcheck="false" placeholder="First of all, …（Body 1）&#10;&#10;Secondly, …（Body 2）&#10;&#10;Finally, …（Body 3）">${esc(d.text)}</textarea>
+      <label>本文（模範解答／最終形 — Body 1〜3 を空行で区切る）</label>
+      <textarea id="pasteText" class="paste-input" rows="9" spellcheck="false" placeholder="First of all, …（Body 1）&#10;&#10;Secondly, …（Body 2）&#10;&#10;Finally, …（Body 3）">${esc(d.text)}</textarea>
+      <label>初回（自分で最初に書いた版・任意）</label>
+      <p class="hint-text">入力すると、タブで「初回」と「模範解答」を切り替えて比較できます。空欄なら初回なしで取り込みます。</p>
+      <textarea id="pasteFirstText" class="paste-input" rows="7" spellcheck="false" placeholder="（任意）あなたが最初に書いた Body 1〜3 を空行で区切って貼り付け">${esc(d.first || '')}</textarea>
       ${state.pasteError ? `<p class="field-error">${esc(state.pasteError)}</p>` : ''}
       <div class="row">
         <button class="btn" data-action="paste-essay-submit">取り込む</button>
@@ -1099,27 +1176,44 @@ function modalPasteEssay() {
   </div>`;
 }
 
+/* 貼り付けテキストを Body 1〜3 に分割する。3段落なら { bodies }、そうでなければ { count }。 */
+function essayBodiesFromText(text) {
+  const paras = String(text || '').split(/\n\s*\n+/).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (paras.length !== 3) return { count: paras.length };
+  const splitSentences = (p) => p.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  const bodies = paras.map(p => {
+    const sentences = splitSentences(p);
+    return { argument: '', sentences: sentences.length ? sentences : [p], ja: '' };
+  });
+  return { bodies };
+}
+
 function doCreateFromPaste() {
   const val = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
   const topic = val('pasteTopic').trim();
   const topicJa = val('pasteTopicJa').trim();
   const stance = val('pasteStance') === 'disagree' ? 'disagree' : 'agree';
   const text = val('pasteText');
-  state.pasteDraft = { topic, topicJa, stance, text }; // 再描画で入力が消えないよう保持
+  const first = val('pasteFirstText');
+  state.pasteDraft = { topic, topicJa, stance, text, first }; // 再描画で入力が消えないよう保持
 
-  // 空行で段落（Body）に分割
-  const paras = text.split(/\n\s*\n+/).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
-  if (paras.length !== 3) {
-    state.pasteError = `Body 1〜3 を空行で区切って3段落で貼り付けてください（現在 ${paras.length} 段落を検出）。`;
+  const main = essayBodiesFromText(text);
+  if (!main.bodies) {
+    state.pasteError = `本文（模範解答）は Body 1〜3 を空行で区切って3段落で貼り付けてください（現在 ${main.count} 段落を検出）。`;
     render();
     return;
   }
-  // 各段落を文単位に分割（.?! の後ろで区切る）
-  const splitSentences = (p) => p.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
-  const bodies = paras.map(p => {
-    const sentences = splitSentences(p);
-    return { argument: '', sentences: sentences.length ? sentences : [p], ja: '' };
-  });
+  // 初回（任意）：入力があれば同じく3段落で解析
+  let firstBodies = null;
+  if (first.trim()) {
+    const f = essayBodiesFromText(first);
+    if (!f.bodies) {
+      state.pasteError = `初回も Body 1〜3 を空行で区切って3段落にしてください（現在 ${f.count} 段落を検出）。空欄なら初回なしで取り込みます。`;
+      render();
+      return;
+    }
+    firstBodies = f.bodies;
+  }
 
   const set = {
     id: 'own-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
@@ -1128,19 +1222,23 @@ function doCreateFromPaste() {
     stance,
     source: 'self',
     createdAt: Date.now(),
-    bodies,
+    bodies: main.bodies,
     evaluation: null,
   };
+  if (firstBodies) set.firstBodies = firstBodies;
   const sets = getSets();
   sets.unshift(set);
   saveSetsList(sets);
   state.modal = null;
   state.pasteError = null;
-  state.pasteDraft = { topic: '', topicJa: '', stance: 'agree', text: '' };
+  state.pasteDraft = { topic: '', topicJa: '', stance: 'agree', text: '', first: '' };
   state.setId = set.id;
   state.showJa = {};
+  state.studyTab = 'model';
   state.view = 'study';
-  state.notice = '自作エッセイを取り込みました。「この構成を採点する」で観点・主体×領域・スコアを付けられます。';
+  state.notice = firstBodies
+    ? '取り込みました。タブで「初回」と「模範解答」を切り替えて比較できます。「採点する」で観点・スコアも付きます。'
+    : '自作エッセイを取り込みました。「この構成を採点する」で観点・主体×領域・スコアを付けられます。';
   render();
 }
 
@@ -1375,7 +1473,7 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'close-modal') {
     state.modal = null; state.keywordError = null;
     state.bodyEdit = null; state.cellDraft = null;
-    state.bodyRewrite = null; state.pasteError = null;
+    state.bodyRewrite = null; state.pasteError = null; state.firstDraft = null;
     render();
   }
   else if (a === 'open-body-edit') {
@@ -1477,8 +1575,31 @@ $app.addEventListener('click', (ev) => {
   else if (a === 'open-set') {
     state.setId = el.dataset.id;
     state.showJa = {};
+    state.studyTab = 'model';
     state.view = 'study';
     render();
+  }
+  else if (a === 'study-tab') { state.studyTab = el.dataset.tab === 'first' ? 'first' : 'model'; render(); }
+  else if (a === 'open-first-draft') {
+    const set = findSet(el.dataset.id || state.setId);
+    if (!set) return;
+    const prefill = Array.isArray(set.firstBodies)
+      ? set.firstBodies.map(b => (b.sentences || []).join(' ')).join('\n\n') : '';
+    state.firstDraft = { setId: set.id, text: prefill, error: null };
+    state.modal = 'firstDraft';
+    render();
+  }
+  else if (a === 'first-draft-save') { doSaveFirstDraft(); }
+  else if (a === 'delete-first-draft') {
+    const sets = getSets();
+    const set = sets.find(s => s.id === (el.dataset.id || state.setId));
+    if (set && confirm('初回（自分で書いた版）を削除しますか？')) {
+      delete set.firstBodies;
+      saveSetsList(sets);
+      state.studyTab = 'model';
+      state.notice = '初回を削除しました。';
+      render();
+    }
   }
   else if (a === 'toggle-pin') {
     const sets = getSets();
